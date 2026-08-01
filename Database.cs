@@ -503,7 +503,7 @@ public class Database
         }
     }
 
-    /// <summary>主题时间轴：按桶聚合（1m 原始分钟 / 5m / 1h），含该桶内去重发言人数</summary>
+    /// <summary>主题时间轴：按桶聚合（1m 原始分钟 / 5m / 1h），含该桶内去重发言人数 + 每桶发包 Top8 呼号明细</summary>
     public List<TopicTimelineRow> QueryTopicTimeline(string topic, string from, string to, string bucket)
     {
         // 桶表达式（ts 格式 yyyy-MM-dd HH:mm:00）
@@ -516,34 +516,76 @@ public class Database
         lock (_lock)
         {
             using var conn = Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT {bucketExpr} AS bucket_ts,
-                       SUM(msg_count) AS total_msg,
-                       SUM(bytes)     AS total_bytes,
-                       COUNT(DISTINCT COALESCE(username, clientid)) AS user_count
-                FROM topic_stats
-                WHERE ts BETWEEN $from AND $to
-                  AND (topic = $topic OR topic LIKE $topic || '/%')
-                GROUP BY bucket_ts
-                ORDER BY bucket_ts
-                """;
-            cmd.Parameters.AddWithValue("$from", from);
-            cmd.Parameters.AddWithValue("$to", to);
-            cmd.Parameters.AddWithValue("$topic", topic);
-            var list = new List<TopicTimelineRow>();
-            using var r = cmd.ExecuteReader();
-            while (r.Read())
+
+            // 1) 每桶总量 + 去重人数
+            var totals = new Dictionary<string, (long Msg, long Bytes, long Users)>();
+            using (var cmd = conn.CreateCommand())
             {
-                list.Add(new TopicTimelineRow
+                cmd.CommandText = $"""
+                    SELECT {bucketExpr} AS bucket_ts,
+                           SUM(msg_count) AS total_msg,
+                           SUM(bytes)     AS total_bytes,
+                           COUNT(DISTINCT COALESCE(username, clientid)) AS user_count
+                    FROM topic_stats
+                    WHERE ts BETWEEN $from AND $to
+                      AND (topic = $topic OR topic LIKE $topic || '/%')
+                    GROUP BY bucket_ts
+                    ORDER BY bucket_ts
+                    """;
+                cmd.Parameters.AddWithValue("$from", from);
+                cmd.Parameters.AddWithValue("$to", to);
+                cmd.Parameters.AddWithValue("$topic", topic);
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                    totals[r.GetString(0)] = (r.GetInt64(1), r.GetInt64(2), r.GetInt64(3));
+            }
+
+            // 2) 每桶发包 Top8 呼号明细（窗口函数，SQL 层截断行数）
+            var topUsers = new Dictionary<string, List<TopicUserStat>>();
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = $"""
+                    SELECT * FROM (
+                        SELECT {bucketExpr} AS bucket_ts,
+                               COALESCE(username, clientid) AS name,
+                               SUM(msg_count) AS msg,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY {bucketExpr}
+                                   ORDER BY SUM(msg_count) DESC, COALESCE(username, clientid)
+                               ) AS rn
+                        FROM topic_stats
+                        WHERE ts BETWEEN $from AND $to
+                          AND (topic = $topic OR topic LIKE $topic || '/%')
+                        GROUP BY {bucketExpr}, COALESCE(username, clientid)
+                    ) WHERE rn <= 8
+                    ORDER BY bucket_ts, rn
+                    """;
+                cmd.Parameters.AddWithValue("$from", from);
+                cmd.Parameters.AddWithValue("$to", to);
+                cmd.Parameters.AddWithValue("$topic", topic);
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
                 {
-                    Ts = r.GetString(0),
-                    MsgCount = r.IsDBNull(1) ? 0 : r.GetInt64(1),
-                    Bytes = r.IsDBNull(2) ? 0 : r.GetInt64(2),
-                    UserCount = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                    var ts = r.GetString(0);
+                    if (!topUsers.TryGetValue(ts, out var list))
+                        topUsers[ts] = list = new List<TopicUserStat>();
+                    list.Add(new TopicUserStat { Name = r.GetString(1), Msg = r.GetInt64(2) });
+                }
+            }
+
+            var result = new List<TopicTimelineRow>();
+            foreach (var (ts, t) in totals)
+            {
+                result.Add(new TopicTimelineRow
+                {
+                    Ts = ts,
+                    MsgCount = t.Msg,
+                    Bytes = t.Bytes,
+                    UserCount = t.Users,
+                    TopUsers = topUsers.TryGetValue(ts, out var u) ? u : [],
                 });
             }
-            return list;
+            return result;
         }
     }
 
@@ -573,13 +615,21 @@ public class Database
     }
 }
 
-/// <summary>主题时间轴行（分钟级）</summary>
+/// <summary>主题时间轴行（桶级：总量 + Top 呼号明细）</summary>
 public class TopicTimelineRow
 {
     public string Ts { get; init; } = "";
     public long MsgCount { get; init; }
     public long Bytes { get; init; }
     public long UserCount { get; init; }
+    public List<TopicUserStat> TopUsers { get; init; } = [];
+}
+
+/// <summary>时间轴桶内单个呼号的发包量</summary>
+public class TopicUserStat
+{
+    public string Name { get; init; } = "";
+    public long Msg { get; init; }
 }
 
 /// <summary>主题统计行（规则引擎消息事件按 topic+clientid+分钟聚合）</summary>

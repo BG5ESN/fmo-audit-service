@@ -474,7 +474,14 @@
         c.strokeStyle = 'rgba(198,40,40,0.4)';
         c.beginPath(); c.moveTo(x, s.padT); c.lineTo(x, s.padT + s.ih); c.stroke();
         s.tip.style.display = 'block';
-        s.tip.innerHTML = `<b>${r.ts}</b><br>发言 ${r.userCount} 人<br>消息 ${fmtNum(r.msgCount)} 条<br>数据量 ${fmtBytes(r.bytes)}`;
+        let rowsHtml = '';
+        if (r.topUsers && r.topUsers.length) {
+          rowsHtml = '<div style="border-top:1px solid #ccc;margin-top:6px;padding-top:6px;max-height:150px;overflow-y:auto">' +
+            r.topUsers.map(u => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${esc(u.name)}</span><b>${fmtNum(u.msg)} 包</b></div>`).join('') +
+            (r.userCount > r.topUsers.length ? `<div style="color:#999;margin-top:3px">… 共 ${r.userCount} 人发言</div>` : '') +
+            '</div>';
+        }
+        s.tip.innerHTML = `<b>${r.ts}</b><br>发言 ${r.userCount} 人 · 消息 ${fmtNum(r.msgCount)} 条 · ${fmtBytes(r.bytes)}${rowsHtml}`;
         const tipW = s.tip.offsetWidth, tipH = s.tip.offsetHeight;
         let tx = x - tipW / 2, ty = y - tipH - 12;
         if (tx < 4) tx = 4;
