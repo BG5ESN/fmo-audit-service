@@ -398,11 +398,12 @@
       try {
         const d = await api(`/api/topic-timeline?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&bucket=${bucket}`);
         if (!d.ok) return;
-        drawTimeline(d.rows);
+        drawTimeline(d.rows, d.bucket);
       } catch (e) { /* 401 */ }
     }
 
-    function drawTimeline(rows) {
+    function drawTimeline(rows, bkt) {
+      const showSec = bkt === '10s';   // 10秒粒度时 X 轴显示到秒
       const cv = $('timeline-canvas');
       const tip = $('timeline-tooltip');
       const dpr = window.devicePixelRatio || 1;
@@ -440,7 +441,8 @@
         c.textAlign = 'center';
         for (let i = 0; i < Math.min(6, s.n); i++) {
           const idx = Math.round(i * (s.n - 1) / Math.max(1, Math.min(6, s.n) - 1));
-          c.fillText(s.rows[idx].ts.slice(5, 16), s.xOf(idx), s.H - 8);
+          const label = showSec ? s.rows[idx].ts.slice(11, 19) : s.rows[idx].ts.slice(5, 16);
+          c.fillText(label, s.xOf(idx), s.H - 8);
         }
         if (s.n === 0) {
           c.fillStyle = '#999';

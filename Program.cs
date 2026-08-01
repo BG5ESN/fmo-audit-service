@@ -303,6 +303,7 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
         var root = doc.RootElement;
         var topic = root.TryGetProperty("topic", out var t) ? t.GetString() : null;
         var username = root.TryGetProperty("username", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
+        if (username == "undefined") username = null;   // EMQX 无用户名客户端的 Erlang undefined atom 序列化
         var clientid = root.TryGetProperty("clientid", out var c) ? c.GetString() : null;
         long bytes = 0;
         if (root.TryGetProperty("payload", out var p) && p.ValueKind == JsonValueKind.String)
@@ -388,7 +389,7 @@ app.MapGet("/api/topic-timeline", (string from, string to, string? bucket, Datab
     var (f, t, err) = ParseRange(from, to);
     if (err != null) return Results.Json(new { ok = false, error = err });
     var topic = db.GetSetting("topic_name") ?? "FMO/RAW";
-    var b = bucket is "5m" or "1h" ? bucket : "1m";
+    var b = bucket is "10s" or "5m" or "1h" ? bucket : "1m";
     var rows = database.QueryTopicTimeline(topic, f, t, b);
     return Results.Json(new { ok = true, topic, from = f, to = t, bucket = b, rows });
 });

@@ -41,8 +41,10 @@ public class TopicIngestService : BackgroundService
     public bool Ingest(string topic, string? username, string clientId, long bytes, DateTime now)
     {
         if (string.IsNullOrEmpty(topic) || string.IsNullOrEmpty(clientId) || bytes < 0) return false;
-        var ts = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0)
-            .ToString("yyyy-MM-dd HH:mm:00");
+        // 10 秒颗粒度取整（yyyy-MM-dd HH:mm:SS，秒 = 0/10/20/30/40/50）
+        var sec = now.Second / 10 * 10;
+        var ts = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, sec)
+            .ToString("yyyy-MM-dd HH:mm:ss");
         lock (_lock)
         {
             var key = (topic, username, clientId, ts);

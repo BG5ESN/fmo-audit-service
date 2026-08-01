@@ -506,9 +506,11 @@ public class Database
     /// <summary>主题时间轴：按桶聚合（1m 原始分钟 / 5m / 1h），含该桶内去重发言人数 + 每桶发包 Top8 呼号明细</summary>
     public List<TopicTimelineRow> QueryTopicTimeline(string topic, string from, string to, string bucket)
     {
-        // 桶表达式（ts 格式 yyyy-MM-dd HH:mm:00）
+        // 桶表达式（ts 格式 yyyy-MM-dd HH:mm:ss，10 秒粒度；旧数据分钟级 SS=00 兼容）
         var bucketExpr = bucket switch
         {
+            "10s" => "ts",
+            "1m" => "substr(ts,1,16) || ':00'",
             "5m" => "substr(ts,1,14) || printf('%02d', CAST(substr(ts,15,2) AS INTEGER)/5*5) || ':00'",
             "1h" => "substr(ts,1,13) || ':00:00'",
             _ => "ts"
