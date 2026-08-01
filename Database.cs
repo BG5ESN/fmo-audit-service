@@ -625,6 +625,21 @@ public class Database
         }
     }
 
+    /// <summary>完全重置：清空全部表（统计 + 配置 + 管理员），恢复到首次安装状态</summary>
+    public void ClearAll()
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            foreach (var t in new[] { "minute_stats", "topic_stats", "health_snapshots", "settings", "admin_user" })
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DELETE FROM {t}";
+                cmd.ExecuteNonQuery();
+            }
+        }
+    }
+
     // ---------------- 过期清理 ----------------
 
     /// <summary>删除 30 天前的增量与健康数据（分批删除，避免长事务锁库）</summary>

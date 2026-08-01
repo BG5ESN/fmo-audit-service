@@ -462,6 +462,23 @@ app.MapPost("/api/admin/clear-data", (Database database) =>
     return Results.Json(new { ok = true, cleared = new { minute_stats = minutes, topic_stats = topics, health_snapshots = health } });
 });
 
+// POST /api/admin/reset — 完全重置审计监控工具（清空全部数据+配置+管理员，停用规则引擎，回到首次安装）
+app.MapPost("/api/admin/reset", async () =>
+{
+    // 1) 清理 EMQX 上的规则引擎（避免残留规则用旧 token 继续转发）
+    if (emqx.IsConfigured)
+    {
+        var err = await emqx.RemoveTopicRuleAsync();
+        if (err != null)
+            return Results.Json(new { ok = false, error = $"清理 EMQX 规则引擎失败: {err}（可稍后手动在 EMQX 删除 emqx-monitor-* 资源）" });
+    }
+    // 2) 停止采集
+    collector.IsConfigured = false;
+    // 3) 清空全部表
+    db.ClearAll();
+    return Results.Json(new { ok = true });
+});
+
 // ---- 时间范围解析：yyyy-MM-ddTHH:mm（服务器本地时间），跨度≤31 天 ----
 static (string From, string To, string? Error) ParseRange(string from, string to)
 {

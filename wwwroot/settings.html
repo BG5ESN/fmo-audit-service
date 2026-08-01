@@ -98,6 +98,11 @@
         <span id="clear-msg" class="form-msg" style="margin:0"></span>
       </div>
       <div class="form-msg" style="margin-top:8px;color:#999">清空后从当前时刻重新统计（保留管理员账号与 EMQX 配置），30 天内无法恢复。</div>
+      <div style="border-top:1px dashed #ccc;margin-top:14px;padding-top:12px">
+        <button class="btn" id="reset-tool" style="border-color:#c62828;color:#c62828">重置审计监控工具</button>
+        <span id="reset-msg" class="form-msg" style="margin:0"></span>
+        <div class="form-msg" style="margin-top:8px;color:#999">完全重置：删除管理员账号、EMQX 配置与全部数据，恢复首次安装状态（需重新设置管理员）。EMQX 上的规则引擎将一并移除。</div>
+      </div>
     </div>
   </div>
 

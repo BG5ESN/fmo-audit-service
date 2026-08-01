@@ -794,5 +794,22 @@
         } else msg.textContent = d.error || '清空失败';
       } catch (e) { msg.textContent = '清空失败'; }
     };
+
+    // ---- 完全重置 ----
+    $('reset-tool').onclick = async () => {
+      const msg = $('reset-msg');
+      msg.className = 'form-msg err';
+      if (!confirm('确定重置审计监控工具？将删除管理员账号、EMQX 配置与全部数据，恢复到首次安装状态。')) return;
+      if (!confirm('再次确认：重置后必须重新设置管理员账号并重新连接 EMQX，且 EMQX 上的规则引擎会被移除。')) return;
+      if (!confirm('最后一次确认：所有历史数据（30 天）将永久丢失。')) return;
+      msg.textContent = '正在重置…';
+      try {
+        const d = await api('/api/admin/reset', { method: 'POST' });
+        if (d.ok) {
+          msg.textContent = '重置完成，正在跳转首次设置…';
+          setTimeout(() => { location.href = '/setup.html'; }, 800);
+        } else msg.textContent = d.error || '重置失败';
+      } catch (e) { msg.textContent = '重置失败'; }
+    };
   }
 })();
