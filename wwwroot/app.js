@@ -411,98 +411,164 @@
       cv.width = W * dpr; cv.height = H * dpr;
       const ctx = cv.getContext('2d');
       ctx.scale(dpr, dpr);
+      const n = rows.length;
 
       const padL = 52, padR = 12, padT = 10, padB = 24;
       const iw = W - padL - padR, ih = H - padT - padB;
-      const n = rows.length;
-      let max = n ? Math.max(...rows.map(r => r.msgCount)) : 0;
-      if (max <= 0) max = 1;
-      max = max * 1.1;
-      const xOf = i => padL + iw * i / Math.max(1, n - 1);
-      const yOf = v => padT + ih * (1 - v / max);
 
-      const state = { rows, ctx, W, H, padL, padR, padT, padB, iw, ih, n, max, xOf, yOf, tip };
+      // 视图状态：可见窗口（数据索引），初始为全量
+      const st = {
+        rows, n, ctx, tip, padL, padR, padT, padB, iw, ih, W, H, showSec,
+        vs: 0, ve: Math.max(0, n - 1),   // 可见窗口 [vs, ve]
+        MIN_WIN: 5,                       // 最小可见桶数（防止缩放到不可用）
+        hover: -1,
+      };
 
-      // 静态绘制（网格 + 线 + 面积）
-      const drawStatic = s => {
-        const c = s.ctx;
-        c.clearRect(0, 0, s.W, s.H);
+      const vn = () => st.ve - st.vs + 1;
+      const xOf = i => st.padL + (i - st.vs) / Math.max(1, vn() - 1) * st.iw;
+      const winMax = () => {
+        let m = 0;
+        for (let i = st.vs; i <= st.ve; i++) m = Math.max(m, st.rows[i].msgCount);
+        return m <= 0 ? 1 : m * 1.1;
+      };
+
+      // 完整绘制（网格 + 线 + 面积 + hover）
+      function drawAll() {
+        const c = st.ctx;
+        c.clearRect(0, 0, st.W, st.H);
+        const max = winMax();
+
+        // 网格 + Y 轴（按可见窗口自适应）
         c.strokeStyle = '#e5e5e5';
         c.fillStyle = '#999';
         c.font = '10px sans-serif';
         c.lineWidth = 1;
         for (let i = 0; i <= 4; i++) {
-          const y = s.padT + s.ih * i / 4;
-          c.beginPath(); c.moveTo(s.padL, y); c.lineTo(s.W - s.padR, y); c.stroke();
-          const val = s.max * (1 - i / 4);
+          const y = st.padT + st.ih * i / 4;
+          c.beginPath(); c.moveTo(st.padL, y); c.lineTo(st.W - st.padR, y); c.stroke();
+          const val = max * (1 - i / 4);
           c.textAlign = 'right';
-          c.fillText(val >= 1000 ? (val / 1000).toFixed(1) + 'k' : Math.round(val).toString(), s.padL - 5, y + 3);
+          c.fillText(val >= 1000 ? (val / 1000).toFixed(1) + 'k' : Math.round(val).toString(), st.padL - 5, y + 3);
         }
+
+        // X 轴标签（可见窗口内均匀 6 个，10s 粒度显示到秒）
         c.textAlign = 'center';
-        for (let i = 0; i < Math.min(6, s.n); i++) {
-          const idx = Math.round(i * (s.n - 1) / Math.max(1, Math.min(6, s.n) - 1));
-          const label = showSec ? s.rows[idx].ts.slice(11, 19) : s.rows[idx].ts.slice(5, 16);
-          c.fillText(label, s.xOf(idx), s.H - 8);
+        const nv = vn();
+        const labels = 6;
+        for (let i = 0; i < labels; i++) {
+          const idx = st.vs + Math.round(i * (nv - 1) / (labels - 1));
+          const label = st.showSec ? st.rows[idx].ts.slice(11, 19) : st.rows[idx].ts.slice(5, 16);
+          c.fillText(label, xOf(idx), st.H - 8);
         }
-        if (s.n === 0) {
+
+        if (st.n === 0) {
           c.fillStyle = '#999';
-          c.fillText('该时间段无数据', s.W / 2 - 40, s.H / 2);
+          c.fillText('该时间段无数据', st.W / 2 - 40, st.H / 2);
+          st.tip.style.display = 'none';
           return;
         }
+
+        // 折线 + 面积（可见窗口）
         c.strokeStyle = '#1565c0';
         c.lineWidth = 1.5;
         c.beginPath();
-        for (let i = 0; i < s.n; i++) {
-          const x = s.xOf(i), y = s.yOf(s.rows[i].msgCount);
-          if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+        for (let i = st.vs; i <= st.ve; i++) {
+          const x = xOf(i), y = st.padT + st.ih * (1 - st.rows[i].msgCount / max);
+          if (i === st.vs) c.moveTo(x, y); else c.lineTo(x, y);
         }
         c.stroke();
-        c.lineTo(s.xOf(s.n - 1), s.padT + s.ih);
-        c.lineTo(s.xOf(0), s.padT + s.ih);
+        c.lineTo(xOf(st.ve), st.padT + st.ih);
+        c.lineTo(xOf(st.vs), st.padT + st.ih);
         c.closePath();
         c.fillStyle = 'rgba(21,101,192,0.08)';
         c.fill();
-      };
 
-      // hover 叠加（只画高亮 + tooltip）
-      const drawHover = (s, idx) => {
-        drawStatic(s);
-        if (idx < 0) { s.tip.style.display = 'none'; return; }
-        const r = s.rows[idx];
-        const x = s.xOf(idx), y = s.yOf(r.msgCount);
-        const c = s.ctx;
-        c.fillStyle = '#c62828';
-        c.beginPath(); c.arc(x, y, 4, 0, Math.PI * 2); c.fill();
-        c.strokeStyle = 'rgba(198,40,40,0.4)';
-        c.beginPath(); c.moveTo(x, s.padT); c.lineTo(x, s.padT + s.ih); c.stroke();
-        s.tip.style.display = 'block';
-        let rowsHtml = '';
-        if (r.topUsers && r.topUsers.length) {
-          rowsHtml = '<div style="border-top:1px solid #ccc;margin-top:6px;padding-top:6px;max-height:150px;overflow-y:auto">' +
-            r.topUsers.map(u => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${esc(u.name)}</span><b>${fmtNum(u.msg)} 包</b></div>`).join('') +
-            (r.userCount > r.topUsers.length ? `<div style="color:#999;margin-top:3px">… 共 ${r.userCount} 人发言</div>` : '') +
-            '</div>';
+        // hover 高亮 + tooltip
+        if (st.hover >= 0 && st.hover >= st.vs && st.hover <= st.ve) {
+          const r = st.rows[st.hover];
+          const x = xOf(st.hover), y = st.padT + st.ih * (1 - r.msgCount / max);
+          c.fillStyle = '#c62828';
+          c.beginPath(); c.arc(x, y, 4, 0, Math.PI * 2); c.fill();
+          c.strokeStyle = 'rgba(198,40,40,0.4)';
+          c.beginPath(); c.moveTo(x, st.padT); c.lineTo(x, st.padT + st.ih); c.stroke();
+          st.tip.style.display = 'block';
+          let rowsHtml = '';
+          if (r.topUsers && r.topUsers.length) {
+            rowsHtml = '<div style="border-top:1px solid #ccc;margin-top:6px;padding-top:6px;max-height:150px;overflow-y:auto">' +
+              r.topUsers.map(u => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${esc(u.name)}</span><b>${fmtNum(u.msg)} 包</b></div>`).join('') +
+              (r.userCount > r.topUsers.length ? `<div style="color:#999;margin-top:3px">… 共 ${r.userCount} 人发言</div>` : '') +
+              '</div>';
+          }
+          st.tip.innerHTML = `<b>${r.ts}</b><br>发言 ${r.userCount} 人 · 消息 ${fmtNum(r.msgCount)} 条 · ${fmtBytes(r.bytes)}${rowsHtml}`;
+          const tipW = st.tip.offsetWidth, tipH = st.tip.offsetHeight;
+          let tx = x - tipW / 2, ty = y - tipH - 12;
+          if (tx < 4) tx = 4;
+          if (tx + tipW > st.W - 4) tx = st.W - tipW - 4;
+          if (ty < 4) ty = y + 14;
+          st.tip.style.left = tx + 'px';
+          st.tip.style.top = ty + 'px';
+        } else {
+          st.tip.style.display = 'none';
         }
-        s.tip.innerHTML = `<b>${r.ts}</b><br>发言 ${r.userCount} 人 · 消息 ${fmtNum(r.msgCount)} 条 · ${fmtBytes(r.bytes)}${rowsHtml}`;
-        const tipW = s.tip.offsetWidth, tipH = s.tip.offsetHeight;
-        let tx = x - tipW / 2, ty = y - tipH - 12;
-        if (tx < 4) tx = 4;
-        if (tx + tipW > s.W - 4) tx = s.W - tipW - 4;
-        if (ty < 4) ty = y + 14;
-        s.tip.style.left = tx + 'px';
-        s.tip.style.top = ty + 'px';
+      }
+
+      // ---- 交互 ----
+
+      // 滚轮缩放（以鼠标位置为锚点；上滚放大，下滚缩小）
+      cv.addEventListener('wheel', e => {
+        e.preventDefault();
+        if (st.n < 2) return;
+        const rect = cv.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const nv = vn();
+        const idx = st.vs + Math.max(0, Math.min(1, (mx - st.padL) / st.iw)) * (nv - 1);   // 锚点数据
+        const zoom = e.deltaY < 0 ? 1.6 : 1 / 1.6;
+        let nw = Math.max(st.MIN_WIN, Math.min(st.n, Math.round(nv / zoom)));
+        if (nw === nv) return;
+        const ratio = Math.max(0, Math.min(1, (mx - st.padL) / st.iw));
+        let ns = Math.round(idx - ratio * (nw - 1));
+        ns = Math.max(0, Math.min(st.n - nw, ns));
+        st.vs = ns; st.ve = ns + nw - 1;
+        st.hover = -1;
+        drawAll();
+      }, { passive: false });
+
+      // 拖拽平移
+      let dragging = false, dragX = 0, dragVs = 0;
+      cv.onmousedown = e => {
+        dragging = true;
+        dragX = e.clientX; dragVs = st.vs;
       };
-
-      drawStatic(state);
-
-      // 绑定 hover（每次重绘只更新 state）
       cv.onmousemove = e => {
         const rect = cv.getBoundingClientRect();
         const mx = e.clientX - rect.left;
-        const idx = state.n < 2 ? 0 : Math.max(0, Math.min(state.n - 1, Math.round((mx - state.padL) / state.iw * (state.n - 1))));
-        drawHover(state, idx);
+        if (dragging) {
+          const nv = vn();
+          const shift = Math.round((mx - dragX) / st.iw * (nv - 1));
+          if (shift !== 0) {
+            let ns = dragVs - shift;
+            ns = Math.max(0, Math.min(st.n - nv, ns));
+            st.vs = ns; st.ve = ns + nv - 1;
+            st.hover = -1;
+            drawAll();
+          }
+        } else {
+          // hover：可见窗口内最近点
+          const nv = vn();
+          const idx = st.vs + Math.max(0, Math.min(1, (mx - st.padL) / st.iw)) * (nv - 1);
+          const h = Math.max(st.vs, Math.min(st.ve, Math.round(idx)));
+          if (h !== st.hover) { st.hover = h; drawAll(); }
+        }
       };
-      cv.onmouseleave = () => drawHover(state, -1);
+      cv.onmouseup = () => { dragging = false; };
+      cv.onmouseleave = () => { dragging = false; st.hover = -1; drawAll(); };
+      // 双击恢复全量视图
+      cv.ondblclick = () => {
+        st.vs = 0; st.ve = st.n - 1; st.hover = -1;
+        drawAll();
+      };
+
+      drawAll();
     }
 
     function render(rows, tpc) {
