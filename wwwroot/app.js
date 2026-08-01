@@ -30,6 +30,7 @@
     trendTitle: document.getElementById('trend-title'),
     trendClose: document.getElementById('trend-close'),
     trendCanvas: document.getElementById('trend-canvas'),
+    trendTooltip: document.getElementById('trend-tooltip'),
     rangeBtns: document.querySelectorAll('.range-btn'),
     tabChart: document.getElementById('tab-chart'),
     tabSessions: document.getElementById('tab-sessions'),
@@ -302,6 +303,11 @@
     }
   }
 
+  // ---------- 柱状图 ----------
+  // 数据点：分钟粒度（1h=60, 6h=360, 24h=1440, 72h=4320）
+  // 画布宽度有限，动态分桶：每根柱子 = 若干分钟的聚合（72h 时每柱约 30 分钟）
+  var chartBuckets = [];
+
   function drawTrend(points, range, errorText) {
     var canvas = el.trendCanvas;
     var ctx = canvas.getContext('2d');
@@ -310,6 +316,7 @@
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, W, H);
+    hideTooltip();
 
     if (errorText) {
       ctx.fillStyle = '#999';
@@ -324,16 +331,31 @@
       return;
     }
 
-    var send = points.map(function (p) { return p.send_pkt; });
-    var recv = points.map(function (p) { return p.recv_pkt; });
-    var maxV = Math.max(1, Math.max.apply(null, send.concat(recv)));
-    var n = points.length;
     var plotW = W - padL - padR, plotH = H - padT - padB;
 
-    function x(i) { return padL + (n === 1 ? plotW : plotW * i / (n - 1)); }
+    // ---- 分桶：柱宽最小 4px，柱数 = min(点数, 可用像素/4) ----
+    var maxBars = Math.max(1, Math.floor(plotW / 4));
+    var bucketSize = Math.ceil(points.length / maxBars);  // 每桶多少分钟
+    chartBuckets = [];
+    for (var i = 0; i < points.length; i += bucketSize) {
+      var slice = points.slice(i, i + bucketSize);
+      var send = 0, recv = 0;
+      slice.forEach(function (p) { send += p.send_pkt || 0; recv += p.recv_pkt || 0; });
+      chartBuckets.push({
+        start: slice[0].time,               // yyyy-MM-dd HH:mm
+        end: slice[slice.length - 1].time,
+        send: send,
+        recv: recv
+      });
+    }
+    var n = chartBuckets.length;
+    var maxV = 1;
+    chartBuckets.forEach(function (b) { maxV = Math.max(maxV, b.send, b.recv); });
+
+    function x(i) { return padL + (n === 1 ? 0 : plotW * i / (n - 1)); }
     function y(v) { return padT + plotH - (plotH * v / maxV); }
 
-    // 网格线
+    // ---- 网格线 + Y 轴刻度 ----
     ctx.strokeStyle = '#e5e5e5';
     ctx.lineWidth = 1;
     for (var g = 0; g <= 4; g++) {
@@ -345,31 +367,74 @@
       ctx.fillText(fmtAxis(Math.round(maxV * (4 - g) / 4)), padL - 8, gy + 4);
     }
 
-    // 时间轴标签（最多 6 个）
+    // ---- 柱子（每桶两根：发包蓝 + 收包绿并排）----
+    var barW = plotW / n;
+    var half = Math.min(barW * 0.35, 10);  // 单根柱宽
+    chartBuckets.forEach(function (b, i) {
+      var bx = x(i);
+      // 发包（蓝）——左
+      ctx.fillStyle = '#1565c0';
+      ctx.fillRect(bx + barW / 2 - half - 1, y(b.send), half, plotH - (y(b.send) - padT));
+      // 收包（绿）——右
+      ctx.fillStyle = '#2e7d32';
+      ctx.fillRect(bx + barW / 2 + 1, y(b.recv), half, plotH - (y(b.recv) - padT));
+    });
+
+    // ---- X 轴时间标签（最多 6 个）----
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     var labelEvery = Math.ceil(n / 6);
     for (var i = 0; i < n; i += labelEvery) {
-      ctx.fillStyle = '#999';
-      ctx.fillText(fmtTimeLabel(points[i].time, range), x(i), H - 8);
+      ctx.fillText(fmtTimeLabel(chartBuckets[i].start, range), x(i), H - 8);
     }
     if (n > 0) {
-      ctx.fillStyle = '#999';
-      ctx.fillText(fmtTimeLabel(points[n - 1].time, range), x(n - 1), H - 8);
+      ctx.fillText(fmtTimeLabel(chartBuckets[n - 1].start, range), x(n - 1), H - 8);
     }
+  }
 
-    // 折线
-    function drawLine(data, color) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (var j = 0; j < n; j++) {
-        var px = x(j), py = y(data[j]);
-        if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-    }
-    drawLine(send, '#1565c0');   // 发包 蓝
-    drawLine(recv, '#2e7d32');   // 收包 绿
+  // ---- 鼠标悬停：定位柱子，显示该时段发包/收包数 ----
+  el.trendCanvas.addEventListener('mousemove', function (e) {
+    if (!chartBuckets.length) return;
+    var canvas = el.trendCanvas;
+    var rect = canvas.getBoundingClientRect();
+    // 画布 860 逻辑像素映射到实际显示尺寸
+    var scaleX = canvas.width / rect.width;
+    var px = (e.clientX - rect.left) * scaleX;
+    var padL = 56;
+    var plotW = canvas.width - padL - 16;
+    var n = chartBuckets.length;
+    if (px < padL || px > padL + plotW) { hideTooltip(); return; }
+    var idx = Math.min(n - 1, Math.max(0, Math.floor((px - padL) / plotW * n)));
+    var b = chartBuckets[idx];
+    showTooltip(e, b);
+  });
+  el.trendCanvas.addEventListener('mouseleave', hideTooltip);
+
+  function showTooltip(e, b) {
+    var tt = el.trendTooltip;
+    tt.innerHTML =
+      '<div class="tt-time">' + esc(fmtFullTime(b.start)) + ' ~ ' + esc(fmtFullTime(b.end)) + '</div>' +
+      '<div class="tt-send">发包: ' + fmtInt(b.send) + ' 包</div>' +
+      '<div class="tt-recv">收包: ' + fmtInt(b.recv) + ' 包</div>';
+    tt.classList.remove('hidden');
+    // 定位在鼠标附近（限制在容器内）
+    var wrap = tt.parentElement;
+    var wrapRect = wrap.getBoundingClientRect();
+    var left = e.clientX - wrapRect.left + 14;
+    var top = e.clientY - wrapRect.top - 10;
+    if (left + tt.offsetWidth > wrapRect.width - 8) left = e.clientX - wrapRect.left - tt.offsetWidth - 14;
+    if (top < 4) top = 4;
+    tt.style.left = left + 'px';
+    tt.style.top = top + 'px';
+  }
+  function hideTooltip() {
+    el.trendTooltip.classList.add('hidden');
+  }
+
+  function fmtFullTime(t) {
+    // "yyyy-MM-dd HH:mm" → "MM-dd HH:mm"
+    return t.slice(5, 16);
   }
 
   function fmtAxis(v) {
@@ -379,8 +444,8 @@
   }
   function fmtTimeLabel(t, range) {
     // t = "yyyy-MM-dd HH:mm"
-    if (range === '24h') return t.slice(5, 16);   // MM-dd HH:mm
-    return t.slice(11, 16);                        // HH:mm
+    if (range === '24h' || range === '72h') return t.slice(5, 16);   // MM-dd HH:mm
+    return t.slice(11, 16);                                            // HH:mm
   }
 
   function showDetail(username) {

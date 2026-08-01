@@ -89,6 +89,7 @@
         <button class="btn btn-small range-btn" data-range="1h">1小时</button>
         <button class="btn btn-small range-btn" data-range="6h">6小时</button>
         <button class="btn btn-small range-btn" data-range="24h">24小时</button>
+        <button class="btn btn-small range-btn" data-range="72h">72小时</button>
       </div>
       <button id="trend-close" class="btn btn-small">关闭</button>
     </div>
@@ -97,11 +98,14 @@
       <button id="tab-sessions" class="btn btn-small trend-tab">上线记录</button>
     </div>
     <div class="trend-body" id="trend-chart-pane">
-      <canvas id="trend-canvas" width="860" height="320"></canvas>
+      <div class="trend-canvas-wrap">
+        <canvas id="trend-canvas" width="860" height="320"></canvas>
+        <div id="trend-tooltip" class="trend-tooltip hidden"></div>
+      </div>
       <div class="trend-legend">
-        <span class="legend-line legend-send">── 发包</span>
-        <span class="legend-line legend-recv">── 收包</span>
-        <span class="trend-note">时间轴精度: 分钟（每点 = 该分钟快照增量）</span>
+        <span class="legend-line legend-send">■ 发包</span>
+        <span class="legend-line legend-recv">■ 收包</span>
+        <span class="trend-note">时间轴精度: 分钟（每点 = 该分钟快照增量，鼠标悬停查看具体数值）</span>
       </div>
     </div>
     <div class="trend-body hidden" id="trend-session-pane">

@@ -91,6 +91,7 @@ app.MapGet("/api/history/{username}", (string username, string range, Database d
     {
         "6h" => 6,
         "24h" => 24,
+        "72h" => 72,
         _ => 1
     };
     var to = DateTime.Now;
@@ -169,6 +170,7 @@ app.MapGet("/api/history/{username}/sessions", (string username, string range, D
     {
         "6h" => 6,
         "24h" => 24,
+        "72h" => 72,
         _ => 1
     };
     var to = DateTime.Now;
