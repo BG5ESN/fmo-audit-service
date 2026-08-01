@@ -79,6 +79,29 @@
   </div>
 </div>
 
+<!-- 趋势图弹窗 -->
+<div id="trend-modal" class="modal hidden">
+  <div class="modal-box trend-box">
+    <div class="modal-head">
+      <span id="trend-title" class="modal-title"></span>
+      <div class="trend-range">
+        <button class="btn btn-small range-btn" data-range="1h">1小时</button>
+        <button class="btn btn-small range-btn" data-range="6h">6小时</button>
+        <button class="btn btn-small range-btn" data-range="24h">24小时</button>
+      </div>
+      <button id="trend-close" class="btn btn-small">关闭</button>
+    </div>
+    <div class="trend-body">
+      <canvas id="trend-canvas" width="860" height="320"></canvas>
+      <div class="trend-legend">
+        <span class="legend-line legend-send">── 发包</span>
+        <span class="legend-line legend-recv">── 收包</span>
+        <span class="trend-note">时间轴精度: 分钟（每点 = 该分钟快照增量）</span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>

@@ -24,7 +24,12 @@
     modal: document.getElementById('detail-modal'),
     detailTitle: document.getElementById('detail-title'),
     detailBody: document.getElementById('detail-body'),
-    detailClose: document.getElementById('detail-close')
+    detailClose: document.getElementById('detail-close'),
+    trendModal: document.getElementById('trend-modal'),
+    trendTitle: document.getElementById('trend-title'),
+    trendClose: document.getElementById('trend-close'),
+    trendCanvas: document.getElementById('trend-canvas'),
+    rangeBtns: document.querySelectorAll('.range-btn')
   };
 
   var state = {
@@ -187,12 +192,17 @@
       '<td class="col-num ' + numClass + '">' + fmtInt(u.totalRecvMsg) + '</td>' +
       '<td class="col-num ' + numClass + '">' + fmtInt(u.totalSendMsg) + '</td>' +
       '<td class="col-time">' + timeHtml + '</td>' +
-      '<td class="col-action"><button class="btn btn-small" data-detail="' + esc(u.username) + '">详情</button></td>' +
+      '<td class="col-action">' +
+        '<button class="btn btn-small" data-trend="' + esc(u.username) + '">趋势</button> ' +
+        '<button class="btn btn-small" data-detail="' + esc(u.username) + '">详情</button>' +
+      '</td>' +
       '</tr>';
   }
 
-  // ---------- 详情弹窗 ----------
+  // ---------- 详情/趋势弹窗 ----------
   el.userBody.addEventListener('click', function (e) {
+    var trendBtn = e.target.closest('[data-trend]');
+    if (trendBtn) { showTrend(trendBtn.getAttribute('data-trend')); return; }
     var detailBtn = e.target.closest('[data-detail]');
     if (detailBtn) { showDetail(detailBtn.getAttribute('data-detail')); return; }
     var name = e.target.closest('[data-username]');
@@ -200,6 +210,130 @@
   });
   el.detailClose.addEventListener('click', hideDetail);
   el.modal.addEventListener('click', function (e) { if (e.target === el.modal) hideDetail(); });
+
+  // ---------- 趋势图 ----------
+  var trendState = { username: '', range: '1h' };
+  el.trendClose.addEventListener('click', hideTrend);
+  el.trendModal.addEventListener('click', function (e) { if (e.target === el.trendModal) hideTrend(); });
+  Array.prototype.forEach.call(el.rangeBtns, function (btn) {
+    btn.addEventListener('click', function () {
+      trendState.range = btn.getAttribute('data-range');
+      Array.prototype.forEach.call(el.rangeBtns, function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      loadTrend();
+    });
+  });
+
+  function showTrend(username) {
+    trendState.username = username;
+    el.trendTitle.textContent = '呼号 ' + username + ' — 历史趋势';
+    el.trendModal.classList.remove('hidden');
+    // 默认选中 1h
+    trendState.range = '1h';
+    Array.prototype.forEach.call(el.rangeBtns, function (b) {
+      b.classList.toggle('active', b.getAttribute('data-range') === '1h');
+    });
+    loadTrend();
+  }
+  function hideTrend() {
+    el.trendModal.classList.add('hidden');
+  }
+
+  async function loadTrend() {
+    var username = encodeURIComponent(trendState.username);
+    var range = trendState.range;
+    el.trendTitle.textContent = '呼号 ' + trendState.username + ' — 近 ' + range + ' 趋势';
+    try {
+      var resp = await fetch('/api/history/' + username + '?range=' + range);
+      var data = await resp.json();
+      if (!data.ok) { drawTrend([], range, data.error || '获取失败'); return; }
+      drawTrend(data.points || [], range);
+    } catch (e) {
+      drawTrend([], range, '请求失败：' + e.message);
+    }
+  }
+
+  function drawTrend(points, range, errorText) {
+    var canvas = el.trendCanvas;
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    var padL = 56, padR = 16, padT = 16, padB = 30;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
+
+    if (errorText) {
+      ctx.fillStyle = '#999';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(errorText, padL, H / 2);
+      return;
+    }
+    if (!points.length) {
+      ctx.fillStyle = '#999';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('暂无数据（该时间段内无记录）', padL, H / 2);
+      return;
+    }
+
+    var send = points.map(function (p) { return p.send_pkt; });
+    var recv = points.map(function (p) { return p.recv_pkt; });
+    var maxV = Math.max(1, Math.max.apply(null, send.concat(recv)));
+    var n = points.length;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    function x(i) { return padL + (n === 1 ? plotW : plotW * i / (n - 1)); }
+    function y(v) { return padT + plotH - (plotH * v / maxV); }
+
+    // 网格线
+    ctx.strokeStyle = '#e5e5e5';
+    ctx.lineWidth = 1;
+    for (var g = 0; g <= 4; g++) {
+      var gy = padT + plotH * g / 4;
+      ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+      ctx.fillStyle = '#999';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(fmtAxis(Math.round(maxV * (4 - g) / 4)), padL - 8, gy + 4);
+    }
+
+    // 时间轴标签（最多 6 个）
+    ctx.textAlign = 'center';
+    var labelEvery = Math.ceil(n / 6);
+    for (var i = 0; i < n; i += labelEvery) {
+      ctx.fillStyle = '#999';
+      ctx.fillText(fmtTimeLabel(points[i].time, range), x(i), H - 8);
+    }
+    if (n > 0) {
+      ctx.fillStyle = '#999';
+      ctx.fillText(fmtTimeLabel(points[n - 1].time, range), x(n - 1), H - 8);
+    }
+
+    // 折线
+    function drawLine(data, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (var j = 0; j < n; j++) {
+        var px = x(j), py = y(data[j]);
+        if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    drawLine(send, '#1565c0');   // 发包 蓝
+    drawLine(recv, '#2e7d32');   // 收包 绿
+  }
+
+  function fmtAxis(v) {
+    if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+    return String(v);
+  }
+  function fmtTimeLabel(t, range) {
+    // t = "yyyy-MM-dd HH:mm"
+    if (range === '24h') return t.slice(5, 16);   // MM-dd HH:mm
+    return t.slice(11, 16);                        // HH:mm
+  }
 
   function showDetail(username) {
     var u = state.users.find(function (x) { return x.username === username; });

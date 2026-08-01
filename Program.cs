@@ -127,7 +127,7 @@ app.MapGet("/api/history/{username}", (string username, string range, Database d
 
     var points = minuteMap.Select(kv => new
     {
-        time = kv.Key[11..] + ":00",   // HH:mm:00
+        time = kv.Key,               // yyyy-MM-dd HH:mm（完整时间戳，前端按 range 格式化）
         recv_pkt = kv.Value.rp,
         send_pkt = kv.Value.sp,
         recv_msg = kv.Value.rm,
