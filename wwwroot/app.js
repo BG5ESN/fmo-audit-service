@@ -39,6 +39,18 @@
     } catch (e) { /* 401 已处理 */ }
   }
 
+  // 首次使用引导：未完成（未配置 EMQX）时强制跳配置页
+  async function ensureWizard() {
+    try {
+      const d = await api('/api/status');
+      if (!d.wizard_done && !d.configured) {
+        location.href = '/settings.html';
+        return false;
+      }
+      return true;
+    } catch (e) { return false; }
+  }
+
   $('logout').addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST' });
     location.href = '/login.html';
@@ -173,6 +185,7 @@
     }
 
     query();
+    ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
   }
@@ -621,6 +634,7 @@
     }
 
     query();
+    ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
   }
@@ -723,6 +737,62 @@
         $('topic-status').textContent = '未启用';
         $('topic-status').style.color = '#999';
       } else msg.textContent = d.error || '停用失败';
+    };
+
+    // ---- 首次引导横幅 ----
+    (async () => {
+      try {
+        const d = await api('/api/status');
+        if (!d.wizard_done && !d.configured) {
+          $('wizard-banner').classList.remove('hidden');
+        }
+      } catch (e) { /* 401 */ }
+    })();
+
+    // ---- 兼容性自检 ----
+    $('check-run').onclick = async () => {
+      const msg = $('check-msg'), box = $('check-result');
+      msg.className = 'form-msg err';
+      msg.textContent = '正在检测…';
+      $('check-run').disabled = true;
+      try {
+        const d = await api('/api/check');
+        if (!d.ok) { msg.textContent = d.error || '检测失败'; box.innerHTML = ''; return; }
+        msg.className = 'form-msg ok';
+        msg.textContent = `检测完成：EMQX ${d.version}`;
+        const rows = d.checks.map(c =>
+          `<div style="display:flex;justify-content:space-between;gap:12px"><span>${c.ok ? '✓' : '✗'} ${esc(c.name)} <span style="color:#999">${c.path}</span></span><span style="color:${c.ok ? '#2e7d32' : '#c62828'}">${esc(c.note)}</span></div>`).join('');
+        const warn = d.supported ? '' : `<div style="color:#c62828;font-weight:600;margin-top:8px">⚠ ${esc(d.suggested_upgrade || '')}</div>`;
+        box.innerHTML = rows + warn;
+      } catch (e) { msg.textContent = '检测失败'; }
+      finally { $('check-run').disabled = false; }
+    };
+
+    // ---- 数据管理 ----
+    async function loadStats() {
+      try {
+        const d = await api('/api/admin/stats');
+        $('stat-minutes').textContent = fmtNum(d.minute_stats);
+        $('stat-topics').textContent = fmtNum(d.topic_stats);
+        $('stat-health').textContent = fmtNum(d.health_snapshots);
+      } catch (e) { /* 401 */ }
+    }
+    loadStats();
+
+    $('clear-data').onclick = async () => {
+      const msg = $('clear-msg');
+      msg.className = 'form-msg err';
+      if (!confirm('确定清空全部统计数据？此操作不可恢复（保留管理员账号和 EMQX 配置）。')) return;
+      if (!confirm('再次确认：清空后 30 天内的历史数据将全部丢失。')) return;
+      msg.textContent = '正在清空…';
+      try {
+        const d = await api('/api/admin/clear-data', { method: 'POST' });
+        if (d.ok) {
+          msg.className = 'form-msg ok';
+          msg.textContent = '已清空（呼号增量 ' + d.cleared.minute_stats + ' / 主题 ' + d.cleared.topic_stats + ' / 健康 ' + d.cleared.health_snapshots + ' 行），从当前时刻重新统计';
+          loadStats();
+        } else msg.textContent = d.error || '清空失败';
+      } catch (e) { msg.textContent = '清空失败'; }
     };
   }
 })();

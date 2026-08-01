@@ -311,9 +311,16 @@ public class EmqxClient
     /// <summary>探测 EMQX 主版本：6.x 用 action 路径（connector→action→规则引用 action），5.x 用 bridge 路径</summary>
     private async Task<bool> IsV6Async()
     {
-        if (_version != null) return _version.StartsWith("6.");
+        var v = await GetEmqxVersionAsync();
+        return v?.StartsWith("6.") == true;
+    }
+
+    /// <summary>获取 EMQX 版本（如 "6.2.2"），探测失败返回 null</summary>
+    public async Task<string?> GetEmqxVersionAsync()
+    {
+        if (_version != null) return _version;
         var resp = await SendAsync(HttpMethod.Get, "/api/v5/nodes", null);
-        if (resp.Error != null) return false;
+        if (resp.Error != null) return null;
         try
         {
             using var doc = JsonDocument.Parse(resp.Body!);
@@ -321,7 +328,41 @@ public class EmqxClient
             _version = root.TryGetProperty("version", out var v) ? v.GetString() : "";
         }
         catch { _version = ""; }
-        return _version?.StartsWith("6.") == true;
+        return _version;
+    }
+
+    /// <summary>兼容性自检：版本 + 关键 API 探测</summary>
+    public async Task<CompatibilityReport> CheckCompatibilityAsync()
+    {
+        var version = await GetEmqxVersionAsync() ?? "未知";
+        var isV6 = version.StartsWith("6.");
+        var checks = new List<CompatCheck>();
+        checks.Add(await ProbeApiAsync("客户端列表", "/api/v5/clients?limit=1"));
+        checks.Add(await ProbeApiAsync("节点/健康", "/api/v5/nodes"));
+        checks.Add(await ProbeApiAsync("规则引擎-连接器", "/api/v5/connectors"));
+        if (isV6)
+            checks.Add(await ProbeApiAsync("规则引擎-动作(6.x 必需)", "/api/v5/actions"));
+        else
+            checks.Add(await ProbeApiAsync("规则引擎-桥接(5.x 必需)", "/api/v5/bridges"));
+        var supported = version.StartsWith("5.") || version.StartsWith("6.");
+        return new CompatibilityReport
+        {
+            Version = version,
+            Supported = supported,
+            Checks = checks,
+            SuggestedUpgrade = supported ? null : "当前 EMQX 版本不在支持范围。请升级到 EMQX 5.1 或更高版本（本工具支持 5.x 与 6.x）",
+        };
+    }
+
+    /// <summary>探测单个 API 是否存在（404=版本过低不支持；401=认证问题）</summary>
+    private async Task<CompatCheck> ProbeApiAsync(string name, string path)
+    {
+        var resp = await SendAsync(HttpMethod.Get, path, null);
+        if (resp.Error == null)
+            return new CompatCheck { Name = name, Path = path, Ok = true, Note = "可用" };
+        if (resp.Error.Contains("404"))
+            return new CompatCheck { Name = name, Path = path, Ok = false, Note = "API 不存在——EMQX 版本过低" };
+        return new CompatCheck { Name = name, Path = path, Ok = false, Note = $"访问失败: {resp.Error}（检查 API Key/网络）" };
     }
 
     /// <summary>创建/更新主题统计规则引擎，自动适配 EMQX 版本（5.x bridge / 6.x action），幂等</summary>
@@ -627,6 +668,24 @@ public class NodeInfo
     public double? Load1 { get; set; }
     public long? MemoryTotal { get; set; }
     public long? MemoryUsed { get; set; }
+}
+
+/// <summary>兼容性自检报告</summary>
+public class CompatibilityReport
+{
+    public string Version { get; init; } = "";
+    public bool Supported { get; init; }
+    public List<CompatCheck> Checks { get; init; } = [];
+    public string? SuggestedUpgrade { get; init; }
+}
+
+/// <summary>单项 API 检查结果</summary>
+public class CompatCheck
+{
+    public string Name { get; init; } = "";
+    public string Path { get; init; } = "";
+    public bool Ok { get; init; }
+    public string Note { get; init; } = "";
 }
 
 public class ClientsResult

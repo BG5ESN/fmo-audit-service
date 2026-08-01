@@ -159,6 +159,7 @@ app.MapGet("/api/status", () => Results.Json(new
     initialized = auth.IsInitialized,
     configured = emqx.IsConfigured,
     collecting = collector.IsConfigured,
+    wizard_done = db.GetSetting("wizard_done") == "1",
     last_status = collector.LastStatus,
     last_collect_ok = collector.LastCollectOk,
     last_error = collector.LastError,
@@ -226,6 +227,7 @@ app.MapPost("/api/config", async (ConfigRequest req) =>
     db.SetSetting("emqx_url", req.EmqxUrl.Trim().TrimEnd('/'));
     db.SetSetting("emqx_api_key", req.ApiKey.Trim());
     db.SetSetting("emqx_api_secret", req.ApiSecret.Trim());
+    db.SetSetting("wizard_done", "1");   // EMQX 连接成功 = 首次引导完成
     collector.IsConfigured = true;
     return Results.Json(new { ok = true });
 });
@@ -425,6 +427,40 @@ static string GetLanIp()
         return "127.0.0.1";
     }
 }
+
+// ---- 兼容性自检 ----
+
+// GET /api/check — EMQX 版本 + 关键 API 探测
+app.MapGet("/api/check", async () =>
+{
+    if (!emqx.IsConfigured)
+        return Results.Json(new { ok = false, error = "未配置 EMQX 连接" });
+    var report = await emqx.CheckCompatibilityAsync();
+    return Results.Json(new
+    {
+        ok = true,
+        version = report.Version,
+        supported = report.Supported,
+        suggested_upgrade = report.SuggestedUpgrade,
+        checks = report.Checks.Select(c => new { c.Name, c.Path, c.Ok, c.Note }),
+    });
+});
+
+// ---- 数据管理 ----
+
+// GET /api/admin/stats — 各表数据量
+app.MapGet("/api/admin/stats", (Database database) =>
+{
+    var (minutes, topics, health) = database.CountRows();
+    return Results.Json(new { ok = true, minute_stats = minutes, topic_stats = topics, health_snapshots = health });
+});
+
+// POST /api/admin/clear-data — 一键清空统计数据（保留配置和管理员）
+app.MapPost("/api/admin/clear-data", (Database database) =>
+{
+    var (minutes, topics, health) = database.ClearAllData();
+    return Results.Json(new { ok = true, cleared = new { minute_stats = minutes, topic_stats = topics, health_snapshots = health } });
+});
 
 // ---- 时间范围解析：yyyy-MM-ddTHH:mm（服务器本地时间），跨度≤31 天 ----
 static (string From, string To, string? Error) ParseRange(string from, string to)

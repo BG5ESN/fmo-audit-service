@@ -591,6 +591,40 @@ public class Database
         }
     }
 
+    // ---------------- 数据管理 ----------------
+
+    /// <summary>统计各表行数</summary>
+    public (long Minutes, long Topics, long Health) CountRows()
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            long Count(string t)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"SELECT COUNT(*) FROM {t}";
+                return (long)(cmd.ExecuteScalar() ?? 0);
+            }
+            return (Count("minute_stats"), Count("topic_stats"), Count("health_snapshots"));
+        }
+    }
+
+    /// <summary>清空全部统计数据（保留 settings / admin_user）</summary>
+    public (long Minutes, long Topics, long Health) ClearAllData()
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            long Del(string t)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DELETE FROM {t}";
+                return cmd.ExecuteNonQuery();
+            }
+            return (Del("minute_stats"), Del("topic_stats"), Del("health_snapshots"));
+        }
+    }
+
     // ---------------- 过期清理 ----------------
 
     /// <summary>删除 30 天前的增量与健康数据（分批删除，避免长事务锁库）</summary>
