@@ -13,7 +13,8 @@
   <div class="config-title">EMQX 客户端监控</div>
   <div class="config-fields">
     <input type="text" id="cfg-address" placeholder="EMQX 地址 如 http://192.168.1.100:18083" class="cfg-input">
-    <input type="password" id="cfg-apikey" placeholder="API Key 如 key:secret" class="cfg-input">
+    <input type="text" id="cfg-apikey" placeholder="API Key" class="cfg-input cfg-key">
+    <input type="password" id="cfg-apisecret" placeholder="API Secret" class="cfg-input cfg-key">
     <button id="cfg-connect" class="btn">连接</button>
     <button id="cfg-disconnect" class="btn hidden">断开</button>
     <span id="cfg-status" class="cfg-status"></span>

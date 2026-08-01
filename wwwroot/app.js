@@ -9,6 +9,7 @@
     configBar: document.getElementById('config-bar'),
     cfgAddress: document.getElementById('cfg-address'),
     cfgApikey: document.getElementById('cfg-apikey'),
+    cfgApisecret: document.getElementById('cfg-apisecret'),
     cfgConnect: document.getElementById('cfg-connect'),
     cfgDisconnect: document.getElementById('cfg-disconnect'),
     cfgStatus: document.getElementById('cfg-status'),
@@ -48,21 +49,23 @@
   el.cfgDisconnect.addEventListener('click', disconnect);
   el.cfgAddress.addEventListener('keydown', function (e) { if (e.key === 'Enter') connect(); });
   el.cfgApikey.addEventListener('keydown', function (e) { if (e.key === 'Enter') connect(); });
+  el.cfgApisecret.addEventListener('keydown', function (e) { if (e.key === 'Enter') connect(); });
 
   async function connect() {
     var address = el.cfgAddress.value.trim();
     var apikey = el.cfgApikey.value.trim();
-    if (!address || !apikey) { setStatus('地址和 API Key 不能为空', true); return; }
+    var apisecret = el.cfgApisecret.value.trim();
+    if (!address || !apikey || !apisecret) { setStatus('地址、API Key、API Secret 不能为空', true); return; }
     setStatus('连接中…');
     try {
       var resp = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: address, apiKey: apikey })
+        body: JSON.stringify({ address: address, apiKey: apikey, apiSecret: apisecret })
       });
       var data = await resp.json();
       if (data.ok) {
-        // 记住地址（API Key 不落盘，安全）
+        // 记住地址（凭据不落盘，安全）
         try { localStorage.setItem('emqxMonitorAddress', address); } catch (e) { }
         state.connected = true;
         setStatus('已连接');

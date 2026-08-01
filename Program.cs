@@ -36,10 +36,11 @@ app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFs });
 // POST /api/config — 配置 EMQX 连接并验证连通性
 app.MapPost("/api/config", async (ConfigRequest req) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Address) || string.IsNullOrWhiteSpace(req.ApiKey))
-        return Results.Json(new { ok = false, error = "地址和 API Key 不能为空" });
+    if (string.IsNullOrWhiteSpace(req.Address) || string.IsNullOrWhiteSpace(req.ApiKey) || string.IsNullOrWhiteSpace(req.ApiSecret))
+        return Results.Json(new { ok = false, error = "地址、API Key、API Secret 不能为空" });
 
-    var err = await emqx.ConfigureAsync(req.Address, req.ApiKey);
+    // EMQX Basic Auth 要求 key:secret，后端拼装，用户无需手动合并
+    var err = await emqx.ConfigureAsync(req.Address, $"{req.ApiKey.Trim()}:{req.ApiSecret.Trim()}");
     if (err != null)
         return Results.Json(new { ok = false, error = err });
 
@@ -208,4 +209,4 @@ static (long rp, long sp, long rm, long sm, long ro, long so) GetBucket(
     SortedDictionary<string, (long rp, long sp, long rm, long sm, long ro, long so)> map, string minute)
     => map.TryGetValue(minute, out var b) ? b : (0, 0, 0, 0, 0, 0);
 
-record ConfigRequest(string Address, string ApiKey);
+record ConfigRequest(string Address, string ApiKey, string ApiSecret);

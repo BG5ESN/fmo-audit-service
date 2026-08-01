@@ -30,6 +30,7 @@ body {
   background: #fff;
   color: #333;
 }
+.cfg-key { min-width: 130px; font-family: Consolas, monospace; }
 .cfg-input:focus { outline: 1px solid #666; }
 .cfg-status { font-size: 12px; color: #999; }
 
