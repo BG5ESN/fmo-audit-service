@@ -11,13 +11,28 @@ namespace EmqxMonitor;
 /// </summary>
 public class EmqxClient
 {
-    private readonly HttpClient _http = new()
-    {
-        Timeout = TimeSpan.FromSeconds(15)
-    };
+    private readonly HttpClient _http;
 
     private string _baseUrl = "";
     private string _apiKey = "";
+
+    public EmqxClient()
+    {
+        // 显式禁用系统代理：面板连的是用户内网 EMQX，必须直连。
+        // 默认 HttpClient 会读 HTTP_PROXY 环境变量/系统代理，
+        // 且 .NET 的 NO_PROXY 不支持 CIDR 网段（如 192.168.1.0/24），
+        // 内网请求被错误转发到代理，代理可能返回 400/拒绝。
+        var handler = new SocketsHttpHandler
+        {
+            Proxy = null,
+            UseProxy = false,
+            ConnectTimeout = TimeSpan.FromSeconds(10)
+        };
+        _http = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+    }
 
     /// <summary>是否已配置连接</summary>
     public bool IsConfigured => !string.IsNullOrEmpty(_baseUrl) && !string.IsNullOrEmpty(_apiKey);
@@ -31,7 +46,12 @@ public class EmqxClient
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
             url = "http://" + url;
 
-        // 先验证连通性：拉 1 条客户端
+        // 第 1 步：无认证探测 /status，确认地址可达且是 EMQX
+        var reachable = await ProbeStatusAsync(url);
+        if (reachable != null)
+            return reachable;
+
+        // 第 2 步：带 key 验证 clients 接口
         var test = await GetClientsAsync(url, apiKey, limit: 1);
         if (test.Error != null)
         {
@@ -39,7 +59,7 @@ public class EmqxClient
             {
                 "BAD_API_KEY_OR_SECRET" => "API Key 错误：请检查 key:secret 是否正确（Dashboard → 管理 → API 密钥）",
                 "HTTP_401" => "认证失败（401）：请检查 API Key",
-                "HTTP_404" => "地址不对：EMQX REST API 路径应为 /api/v5（检查 EMQX 版本是否为 5.x）",
+                "HTTP_404" => "地址不对：EMQX REST API 路径应为 /api/v5（检查 EMQX 版本是否为 5.x/6.x）",
                 _ => $"连接失败：{test.Error}"
             };
         }
@@ -47,6 +67,32 @@ public class EmqxClient
         _baseUrl = url;
         _apiKey = apiKey;
         return null;
+    }
+
+    /// <summary>无认证探测 /status，返回 null 表示可达；否则返回错误消息</summary>
+    private async Task<string?> ProbeStatusAsync(string baseUrl)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync($"{baseUrl}/status");
+            if (resp.IsSuccessStatusCode)
+                return null;  // 可达
+            return $"地址可达但响应异常（HTTP {(int)resp.StatusCode}）：{baseUrl}/status";
+        }
+        catch (TaskCanceledException)
+        {
+            return "请求超时：EMQX 地址不可达或防火墙拦截";
+        }
+        catch (HttpRequestException ex)
+        {
+            var msg = ex.InnerException?.Message ?? ex.Message;
+            if (msg.Contains("refused", StringComparison.OrdinalIgnoreCase))
+                return "连接被拒绝：EMQX 未启动或端口不对（默认 18083）";
+            if (msg.Contains("name or service", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("nodename", StringComparison.OrdinalIgnoreCase))
+                return "地址无法解析：请检查 EMQX 地址";
+            return $"网络错误：{msg}";
+        }
     }
 
     /// <summary>拉取客户端列表（最多 limit 条，实测 limit=10000 可用）</summary>
@@ -74,7 +120,9 @@ public class EmqxClient
                         return new ClientsResult { Error = err.Code };
                 }
                 catch { }
-                return new ClientsResult { Error = $"HTTP_{(int)resp.StatusCode}" };
+                // 带出原始响应体，方便诊断（截断 200 字符）
+                var snippet = body.Length > 200 ? body[..200] : body;
+                return new ClientsResult { Error = $"HTTP_{(int)resp.StatusCode}: {snippet}" };
             }
 
             var result = JsonSerializer.Deserialize<ClientsResponse>(body);
