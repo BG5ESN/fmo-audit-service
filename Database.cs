@@ -515,10 +515,11 @@ public class Database
             foreach (var table in new[] { "minute_stats", "health_snapshots", "topic_stats" })
             {
                 // 分批删：每批 20000 行，直到删不动
+                // 注意：SQLite 默认不支持 DELETE ... LIMIT（语法错误），必须用 rowid 子查询分批
                 for (var i = 0; i < 200; i++)
                 {
                     using var cmd = conn.CreateCommand();
-                    cmd.CommandText = $"DELETE FROM {table} WHERE ts < $cutoff LIMIT 20000";
+                    cmd.CommandText = $"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE ts < $cutoff LIMIT 20000)";
                     cmd.Parameters.AddWithValue("$cutoff", cutoff);
                     var affected = cmd.ExecuteNonQuery();
                     if (affected == 0) break;

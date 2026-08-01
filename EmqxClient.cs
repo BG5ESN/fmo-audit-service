@@ -298,22 +298,129 @@ public class EmqxClient
         catch { return ""; }
     }
 
-    // ---------------- 主题统计：规则引擎自动配置（实测 5.8.6 格式） ----------------
+    // ---------------- 主题统计：规则引擎自动配置（5.8.6 / 6.2.2 双版本） ----------------
 
     /// <summary>连接器/规则固定命名（单实例管理；重复调用幂等更新）</summary>
     public const string TopicConnectorName = "emqx-monitor-ingest";
     public const string TopicBridgeName = "emqx-monitor-bridge";
+    public const string TopicActionName = "emqx-monitor-ingest-action";
     public const string TopicRuleName = "emqx-monitor-topic-rule";
 
-    /// <summary>
-    /// 创建/更新主题统计规则引擎（连接器 + bridge v2 + 规则），幂等。
-    /// 实测 5.8.6 要点：
-    ///  - 连接器字段平铺（type=http、name、url、headers）
-    ///  - 规则 action 引用 bridge（不是 connector！）："webhook:{bridgeName}"，EMQX 自动规范化为 http:
-    ///  - bridge 必须再建一层（POST /bridges，平铺 url/method/headers/body）
-    ///  - 规则 SQL 不能用 length()（无此函数），payload 由 monitor 端解码计算字节数
-    /// </summary>
+    private string? _version;
+
+    /// <summary>探测 EMQX 主版本：6.x 用 action 路径（connector→action→规则引用 action），5.x 用 bridge 路径</summary>
+    private async Task<bool> IsV6Async()
+    {
+        if (_version != null) return _version.StartsWith("6.");
+        var resp = await SendAsync(HttpMethod.Get, "/api/v5/nodes", null);
+        if (resp.Error != null) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            var root = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement[0] : doc.RootElement;
+            _version = root.TryGetProperty("version", out var v) ? v.GetString() : "";
+        }
+        catch { _version = ""; }
+        return _version?.StartsWith("6.") == true;
+    }
+
+    /// <summary>创建/更新主题统计规则引擎，自动适配 EMQX 版本（5.x bridge / 6.x action），幂等</summary>
     public async Task<string?> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
+        => await IsV6Async()
+            ? await SetupTopicRuleV6Async(webhookUrl, token, topic)
+            : await SetupTopicRuleV5Async(webhookUrl, token, topic);
+
+    /// <summary>删除主题统计规则引擎（适配版本），幂等</summary>
+    public async Task<string?> RemoveTopicRuleAsync()
+        => await IsV6Async() ? await RemoveTopicRuleV6Async() : await RemoveTopicRuleV5Async();
+
+    // ---------- 6.x 路径（实测 6.2.2）：connector → action → 规则引用 "http:{action}" ----------
+    // 规则动作不能直接引用 connector（actions.discarded 计数），必须创建 action 实体。
+    // action parameters.body 用 "${.}"（整个输出 JSON），payload 由 monitor 端 base64 解码算字节。
+
+    private async Task<string?> SetupTopicRuleV6Async(string webhookUrl, string token, string topic)
+    {
+        var uri = new Uri(webhookUrl);
+        var baseUrl = uri.GetLeftPart(UriPartial.Authority);
+        var path = uri.AbsolutePath;
+
+        // 1) 连接器（基础地址 + token headers）
+        var connectorBody = JsonSerializer.Serialize(new
+        {
+            type = "http",
+            name = TopicConnectorName,
+            description = "EMQX Monitor topic ingest",
+            url = baseUrl,
+            headers = new Dictionary<string, string>
+            {
+                ["content-type"] = "application/json",
+                ["x-ingest-token"] = token
+            },
+            enable = true
+        });
+        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
+        {
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody);
+            if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
+        }
+        else
+        {
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody);
+            if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
+        }
+
+        // 2) action（egress：method/path/headers/body 模板）
+        var actionBody = JsonSerializer.Serialize(new
+        {
+            type = "http",
+            name = TopicActionName,
+            connector = TopicConnectorName,
+            enable = true,
+            parameters = new
+            {
+                method = "post",
+                path,
+                headers = new Dictionary<string, string>
+                {
+                    ["content-type"] = "application/json",
+                    ["x-ingest-token"] = token
+                },
+                body = "${.}"
+            }
+        });
+        var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null);
+        if (existingAction.Error == null && existingAction.Body != null && existingAction.Body.Contains($"\"name\":\"{TopicActionName}\""))
+        {
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionBody);
+            if (upd.Error != null) return $"更新动作失败: {upd.Error}";
+        }
+        else
+        {
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody);
+            if (cre.Error != null) return $"创建动作失败: {cre.Error}";
+        }
+
+        // 3) 规则
+        return await UpsertTopicRuleAsync(topic, $"http:{TopicActionName}");
+    }
+
+    private async Task<string?> RemoveTopicRuleV6Async()
+    {
+        var err = await DeleteTopicRuleAsync();
+        if (err != null) return err;
+        var adel = await SendAsync(HttpMethod.Delete, $"/api/v5/actions/http:{TopicActionName}", null);
+        if (adel.Error != null && !adel.Error.Contains("404")) return $"删除动作失败: {adel.Error}";
+        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
+        return null;
+    }
+
+    // ---------- 5.x 路径（实测 5.8.6）：connector → bridge v2 → 规则引用 "webhook:{bridge}" ----------
+    // 实测要点：规则 action 必须引用 bridge（引用 connector 校验通过但 actions 计数为 0/discarded）；
+    // bridge body 必须模板化为完整 JSON；规则 SQL 不能用 length() 函数。
+
+    private async Task<string?> SetupTopicRuleV5Async(string webhookUrl, string token, string topic)
     {
         var connectorBody = JsonSerializer.Serialize(new
         {
@@ -346,7 +453,6 @@ public class EmqxClient
         }
 
         // 2) bridge v2：平铺 url/method/headers/body（实测 required: url）
-        //    body 必须模板化为完整 JSON——裸 ${payload} 发的是非 JSON 内容，monitor 解析失败
         var bridgeBody = JsonSerializer.Serialize(new
         {
             type = "http",
@@ -376,17 +482,33 @@ public class EmqxClient
             if (cre.Error != null) return $"创建桥接失败: {cre.Error}";
         }
 
-        // 3) 规则：SQL 用 "topic/#" 通配（# 匹配零级或多级，覆盖精确主题与子主题）
+        // 3) 规则
+        return await UpsertTopicRuleAsync(topic, $"webhook:{TopicBridgeName}");
+    }
+
+    private async Task<string?> RemoveTopicRuleV5Async()
+    {
+        var err = await DeleteTopicRuleAsync();
+        if (err != null) return err;
+        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null);
+        if (bdel.Error != null && !bdel.Error.Contains("404")) return $"删除桥接失败: {bdel.Error}";
+        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
+        return null;
+    }
+
+    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题）</summary>
+    private async Task<string?> UpsertTopicRuleAsync(string topic, string actionRef)
+    {
         var ruleSql = $"SELECT clientid, username, topic, payload, qos, timestamp FROM \"{topic}/#\"";
         var ruleBody = JsonSerializer.Serialize(new
         {
             name = TopicRuleName,
             sql = ruleSql,
-            actions = new[] { $"webhook:{TopicBridgeName}" },
+            actions = new[] { actionRef },
             enable = true,
             description = "EMQX Monitor topic ingest rule"
         });
-
         var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
         if (ruleId != null)
         {
@@ -401,8 +523,8 @@ public class EmqxClient
         return null;
     }
 
-    /// <summary>删除主题统计规则、桥接与连接器（幂等）</summary>
-    public async Task<string?> RemoveTopicRuleAsync()
+    /// <summary>删除主题统计规则</summary>
+    private async Task<string?> DeleteTopicRuleAsync()
     {
         var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
         if (ruleId != null)
@@ -410,10 +532,6 @@ public class EmqxClient
             var del = await SendAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}", null);
             if (del.Error != null) return $"删除规则失败: {del.Error}";
         }
-        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null);
-        if (bdel.Error != null && !bdel.Error.Contains("404")) return $"删除桥接失败: {bdel.Error}";
-        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
-        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
         return null;
     }
 
