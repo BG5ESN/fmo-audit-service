@@ -358,10 +358,21 @@ public class EmqxClient
             },
             enable = true
         });
+        // PUT 不允许 name/type 字段（6.x 实测 unknown_fields），只更新部分字段
+        var connectorUpdateBody = JsonSerializer.Serialize(new
+        {
+            url = baseUrl,
+            headers = new Dictionary<string, string>
+            {
+                ["content-type"] = "application/json",
+                ["x-ingest-token"] = token
+            },
+            enable = true
+        });
         var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null);
         if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody);
             if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
         }
         else
@@ -389,10 +400,27 @@ public class EmqxClient
                 body = "${.}"
             }
         });
+        // PUT 不允许 name/type（6.x 实测 required 仅 connector+parameters）
+        var actionUpdateBody = JsonSerializer.Serialize(new
+        {
+            connector = TopicConnectorName,
+            enable = true,
+            parameters = new
+            {
+                method = "post",
+                path,
+                headers = new Dictionary<string, string>
+                {
+                    ["content-type"] = "application/json",
+                    ["x-ingest-token"] = token
+                },
+                body = "${.}"
+            }
+        });
         var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null);
         if (existingAction.Error == null && existingAction.Body != null && existingAction.Body.Contains($"\"name\":\"{TopicActionName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody);
             if (upd.Error != null) return $"更新动作失败: {upd.Error}";
         }
         else
