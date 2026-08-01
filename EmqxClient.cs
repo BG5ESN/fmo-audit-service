@@ -82,11 +82,18 @@ public class EmqxClient
         }
         catch (TaskCanceledException)
         {
-            return new ClientsResult { Error = "请求超时：EMQX 地址不可达" };
+            return new ClientsResult { Error = "请求超时：EMQX 地址不可达或防火墙拦截" };
         }
         catch (HttpRequestException ex)
         {
-            return new ClientsResult { Error = $"网络错误：{ex.Message}" };
+            // 细化常见错误：连接拒绝 / DNS 失败
+            var msg = ex.InnerException?.Message ?? ex.Message;
+            if (msg.Contains("refused", StringComparison.OrdinalIgnoreCase))
+                return new ClientsResult { Error = "连接被拒绝：EMQX 未启动或端口不对（默认 18083）" };
+            if (msg.Contains("name or service", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("nodename", StringComparison.OrdinalIgnoreCase))
+                return new ClientsResult { Error = "地址无法解析：请检查 EMQX 地址" };
+            return new ClientsResult { Error = $"网络错误：{msg}" };
         }
     }
 

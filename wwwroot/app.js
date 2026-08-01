@@ -62,6 +62,8 @@
       });
       var data = await resp.json();
       if (data.ok) {
+        // 记住地址（API Key 不落盘，安全）
+        try { localStorage.setItem('emqxMonitorAddress', address); } catch (e) { }
         state.connected = true;
         setStatus('已连接');
         el.cfgConnect.classList.add('hidden');
@@ -426,7 +428,11 @@
       .replace(/"/g, '&quot;');
   }
 
-  // 启动时尝试恢复连接状态
+  // 启动时恢复：记住的地址 + 已连接状态
+  try {
+    var saved = localStorage.getItem('emqxMonitorAddress');
+    if (saved) el.cfgAddress.value = saved;
+  } catch (e) { }
   fetch('/api/status').then(function (r) { return r.json(); }).then(function (d) {
     if (d.configured) {
       state.connected = true;
