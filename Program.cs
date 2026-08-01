@@ -1,6 +1,18 @@
 using EmqxMonitor;
+using System.Net;
+using System.Net.Sockets;
 
-const int Port = 9527;
+const int PortBase = 9527;
+const int PortMax = 9546;   // 最多尝试 20 个端口
+
+// ---- 端口解析：重复启动时打开已有实例，端口被占时自动换 ----
+var port = await ResolvePortAsync();
+if (port == -2) return;   // 已有实例在跑：已打开浏览器，本进程退出
+if (port < 0)
+{
+    Console.WriteLine("错误：无法找到空闲端口（9527-9546 均被占用）");
+    return;
+}
 
 // 单文件模式下 wwwroot 内嵌于 exe，运行时自解压到 AppContext.BaseDirectory；
 // ContentRoot 必须指向它，否则静态文件 404
@@ -8,7 +20,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     ContentRootPath = AppContext.BaseDirectory
 });
-builder.WebHost.UseUrls($"http://127.0.0.1:{Port}");
+builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 
 // 数据库放固定用户数据目录（单文件自解压目录是随机路径，重启会丢数据）
 var dataDir = Path.Combine(
@@ -192,9 +204,71 @@ app.MapGet("/api/history/{username}/sessions", (string username, string range, D
 _ = Task.Run(async () =>
 {
     await Task.Delay(800);
+    OpenBrowser(port);
+});
+
+// ---- 端口解析与浏览器打开 ----
+
+/// <summary>解析可用端口。返回 -2 = 已有实例运行（已处理）；-1 = 无空闲端口；否则返回端口号</summary>
+static async Task<int> ResolvePortAsync()
+{
+    for (int p = PortBase; p <= PortMax; p++)
+    {
+        if (!await CanBindAsync(p))
+        {
+            // 端口被占用：检查是不是本程序旧实例（响应 /api/status 且含 ok 标记）
+            if (await IsOurInstanceAsync(p))
+            {
+                Console.WriteLine($"检测到监控面板已在运行（http://127.0.0.1:{p}），打开浏览器并退出本进程");
+                OpenBrowser(p);
+                return -2;
+            }
+            continue;   // 被其他程序占用，试下一个端口
+        }
+        return p;
+    }
+    return -1;
+}
+
+/// <summary>尝试绑定端口（成功即空闲）</summary>
+static async Task<bool> CanBindAsync(int port)
+{
     try
     {
-        var url = $"http://127.0.0.1:{Port}";
+        var listener = new TcpListener(IPAddress.Loopback, port);
+        listener.Start();
+        listener.Stop();
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+/// <summary>探测端口上是否运行着本程序（/api/status 返回含 ok 的 JSON）</summary>
+static async Task<bool> IsOurInstanceAsync(int port)
+{
+    try
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(800) };
+        var resp = await client.GetAsync($"http://127.0.0.1:{port}/api/status");
+        if (!resp.IsSuccessStatusCode) return false;
+        var body = await resp.Content.ReadAsStringAsync();
+        return body.Contains("\"ok\"", StringComparison.OrdinalIgnoreCase);
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+/// <summary>用默认浏览器打开面板地址（失败静默）</summary>
+static void OpenBrowser(int port)
+{
+    try
+    {
+        var url = $"http://127.0.0.1:{port}";
         if (OperatingSystem.IsWindows())
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
         else if (OperatingSystem.IsLinux())
@@ -203,7 +277,7 @@ _ = Task.Run(async () =>
             System.Diagnostics.Process.Start("open", url);
     }
     catch { }
-});
+}
 
 app.Run();
 
