@@ -179,6 +179,9 @@ tr.row-offline .num { color: #999; }
 .trend-range { display: flex; gap: 6px; }
 .range-btn.active { background: #333; color: #fff; }
 .trend-body { padding: 12px 16px 16px; }
+.trend-tabs { display: flex; gap: 6px; padding: 8px 16px 0; border-bottom: 1px solid #e5e5e5; }
+.trend-tab { border-bottom: none; }
+.trend-tab.active { background: #333; color: #fff; }
 #trend-canvas { width: 100%; height: auto; border: 1px solid #e5e5e5; background: #fff; }
 .trend-legend {
   display: flex;

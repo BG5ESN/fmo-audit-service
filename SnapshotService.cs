@@ -33,6 +33,9 @@ public class SnapshotService : BackgroundService
         if (configured) LastError = null;
     }
 
+    /// <summary>最近一次轮询的在线 clientid → 快照信息（用于检测下线）</summary>
+    private Dictionary<string, EmqxClientInfo> _lastOnline = new();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -50,6 +53,17 @@ public class SnapshotService : BackgroundService
                     else
                     {
                         var now = DateTime.Now;
+
+                        // 检测下线：上轮在线但本轮消失的客户端，补写 connected=0 快照
+                        // （EMQX API 只返回在线客户端，不补写就无法在历史里看到 1→0 翻转）
+                        var currentIds = new HashSet<string>(result.Clients.Select(c => c.ClientId));
+                        foreach (var (cid, last) in _lastOnline)
+                        {
+                            if (!currentIds.Contains(cid))
+                                _db.WriteOfflineSnapshot(cid, last.Username, last, now);
+                        }
+                        _lastOnline = result.Clients.ToDictionary(c => c.ClientId);
+
                         _db.WriteSnapshot(result.Clients, now);
                         _db.AggregateAndClean(now);
                         LatestSnapshot = BuildSnapshot(result.Clients, now);

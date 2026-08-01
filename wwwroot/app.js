@@ -29,7 +29,12 @@
     trendTitle: document.getElementById('trend-title'),
     trendClose: document.getElementById('trend-close'),
     trendCanvas: document.getElementById('trend-canvas'),
-    rangeBtns: document.querySelectorAll('.range-btn')
+    rangeBtns: document.querySelectorAll('.range-btn'),
+    tabChart: document.getElementById('tab-chart'),
+    tabSessions: document.getElementById('tab-sessions'),
+    trendChartPane: document.getElementById('trend-chart-pane'),
+    trendSessionPane: document.getElementById('trend-session-pane'),
+    sessionBody: document.getElementById('session-body')
   };
 
   var state = {
@@ -212,7 +217,7 @@
   el.modal.addEventListener('click', function (e) { if (e.target === el.modal) hideDetail(); });
 
   // ---------- 趋势图 ----------
-  var trendState = { username: '', range: '1h' };
+  var trendState = { username: '', range: '1h', tab: 'chart' };
   el.trendClose.addEventListener('click', hideTrend);
   el.trendModal.addEventListener('click', function (e) { if (e.target === el.trendModal) hideTrend(); });
   Array.prototype.forEach.call(el.rangeBtns, function (btn) {
@@ -221,12 +226,24 @@
       Array.prototype.forEach.call(el.rangeBtns, function (b) {
         b.classList.toggle('active', b === btn);
       });
-      loadTrend();
+      if (trendState.tab === 'chart') loadTrend(); else loadSessions();
     });
   });
+  el.tabChart.addEventListener('click', function () { switchTab('chart'); });
+  el.tabSessions.addEventListener('click', function () { switchTab('sessions'); });
+
+  function switchTab(tab) {
+    trendState.tab = tab;
+    el.tabChart.classList.toggle('active', tab === 'chart');
+    el.tabSessions.classList.toggle('active', tab === 'sessions');
+    el.trendChartPane.classList.toggle('hidden', tab !== 'chart');
+    el.trendSessionPane.classList.toggle('hidden', tab !== 'sessions');
+    if (tab === 'chart') loadTrend(); else loadSessions();
+  }
 
   function showTrend(username) {
     trendState.username = username;
+    trendState.tab = 'chart';
     el.trendTitle.textContent = '呼号 ' + username + ' — 历史趋势';
     el.trendModal.classList.remove('hidden');
     // 默认选中 1h
@@ -234,6 +251,10 @@
     Array.prototype.forEach.call(el.rangeBtns, function (b) {
       b.classList.toggle('active', b.getAttribute('data-range') === '1h');
     });
+    el.tabChart.classList.add('active');
+    el.tabSessions.classList.remove('active');
+    el.trendChartPane.classList.remove('hidden');
+    el.trendSessionPane.classList.add('hidden');
     loadTrend();
   }
   function hideTrend() {
@@ -251,6 +272,28 @@
       drawTrend(data.points || [], range);
     } catch (e) {
       drawTrend([], range, '请求失败：' + e.message);
+    }
+  }
+
+  async function loadSessions() {
+    var username = encodeURIComponent(trendState.username);
+    var range = trendState.range;
+    try {
+      var resp = await fetch('/api/history/' + username + '/sessions?range=' + range);
+      var data = await resp.json();
+      var sessions = (data.sessions || []);
+      var html = '';
+      sessions.forEach(function (s) {
+        html += '<tr>' +
+          '<td>' + esc(s.start) + '</td>' +
+          '<td>' + (s.end ? esc(s.end) : '-') + '</td>' +
+          '<td>' + s.duration_min + ' 分钟</td>' +
+          '<td>' + (s.online ? '在线中' : '已下线') + '</td>' +
+          '</tr>';
+      });
+      el.sessionBody.innerHTML = html || '<tr><td colspan="4" style="text-align:center;color:#999;">该时间段内无上线记录</td></tr>';
+    } catch (e) {
+      el.sessionBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;">请求失败：' + esc(e.message) + '</td></tr>';
     }
   }
 

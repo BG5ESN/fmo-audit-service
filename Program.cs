@@ -150,6 +150,30 @@ app.MapGet("/api/debug", () =>
     return Results.Json(dbg);
 });
 
+// GET /api/history/{username}/sessions — 历史上线/下线记录
+app.MapGet("/api/history/{username}/sessions", (string username, string range, Database database) =>
+{
+    var hours = range switch
+    {
+        "6h" => 6,
+        "24h" => 24,
+        _ => 1
+    };
+    var to = DateTime.Now;
+    var from = to.AddHours(-hours);
+
+    var sessions = database.QuerySessions(username, from, to);
+    var result = sessions.Select(s => new
+    {
+        start = s.Start.ToString("yyyy-MM-dd HH:mm:ss"),
+        end = s.End?.ToString("yyyy-MM-dd HH:mm:ss"),
+        online = s.End == null,
+        duration_min = Math.Round(s.DurationSeconds / 60.0, 1)
+    }).ToList();
+
+    return Results.Json(new { ok = true, username, range, count = result.Count, sessions = result });
+});
+
 app.Run();
 
 static (long rp, long sp, long rm, long sm, long ro, long so) GetBucket(

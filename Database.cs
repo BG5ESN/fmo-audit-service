@@ -75,6 +75,40 @@ public class Database
         return conn;
     }
 
+    /// <summary>写入一条离线快照（客户端断开时补写，保留上次统计值）</summary>
+    public void WriteOfflineSnapshot(string clientId, string? username, EmqxClientInfo last, DateTime snapshotAt)
+    {
+        var ts = snapshotAt.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO client_snapshots
+                    (clientid, username, connected, connected_at, ip_address,
+                     recv_pkt, send_pkt, recv_msg, send_msg, recv_oct, send_oct,
+                     node, snapshot_at)
+                VALUES
+                    ($cid, $user, 0, $connAt, $ip,
+                     $rp, $sp, $rm, $sm, $ro, $so,
+                     $node, $ts)
+                """;
+            cmd.Parameters.AddWithValue("$cid", clientId);
+            cmd.Parameters.AddWithValue("$user", (object?)username ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$connAt", (object?)last.ConnectedAt ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ip", (object?)last.IpAddress ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$rp", last.RecvPkt);
+            cmd.Parameters.AddWithValue("$sp", last.SendPkt);
+            cmd.Parameters.AddWithValue("$rm", last.RecvMsg);
+            cmd.Parameters.AddWithValue("$sm", last.SendMsg);
+            cmd.Parameters.AddWithValue("$ro", last.RecvOct);
+            cmd.Parameters.AddWithValue("$so", last.SendOct);
+            cmd.Parameters.AddWithValue("$node", (object?)last.Node ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ts", ts);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     /// <summary>写入一批客户端快照（单事务）</summary>
     public void WriteSnapshot(IEnumerable<EmqxClientInfo> clients, DateTime snapshotAt)
     {
@@ -364,6 +398,97 @@ public class Database
         }
     }
 
+    /// <summary>
+    /// 查询某呼号的历史上线记录（session 列表）。
+    /// 1h 内：原始快照按 connected 0→1/1→0 精确切分（5s 粒度）
+    /// 更早：分钟表按 connected_secs &gt; 0 的连续分钟合并（分钟粒度）
+    /// </summary>
+    public List<SessionInfo> QuerySessions(string username, DateTime from, DateTime to)
+    {
+        var sessions = new List<SessionInfo>();
+        lock (_lock)
+        {
+            // 1) 原始快照切分（from 起 1h 内，或 to 之前）
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = """
+                    SELECT snapshot_at, connected FROM client_snapshots
+                    WHERE username = $user AND snapshot_at >= $from AND snapshot_at <= $to
+                    ORDER BY snapshot_at
+                    """;
+                cmd.Parameters.AddWithValue("$user", username);
+                cmd.Parameters.AddWithValue("$from", from.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                cmd.Parameters.AddWithValue("$to", to.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                using var r = cmd.ExecuteReader();
+                DateTime? openAt = null;
+                while (r.Read())
+                {
+                    var ts = DateTime.ParseExact(r.GetString(0), "yyyy-MM-dd HH:mm:ss.fff", null);
+                    var connected = r.GetInt32(1) == 1;
+                    if (connected && openAt == null) openAt = ts;
+                    else if (!connected && openAt != null)
+                    {
+                        sessions.Add(new SessionInfo { Start = openAt.Value, End = ts });
+                        openAt = null;
+                    }
+                }
+                if (openAt != null) sessions.Add(new SessionInfo { Start = openAt.Value, End = null }); // 仍在线
+            }
+
+            // 2) 分钟表合并（仅 from 到 to 且超出原始表覆盖范围的部分）
+            //    分钟表只存在线分钟（connected_secs>0 才写入），离线分钟无行，
+            //    所以用"下一行间隔 >1 分钟"判断 session 闭合
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = """
+                    SELECT minute, connected_secs FROM client_minutes
+                    WHERE username = $user AND minute >= $from AND minute <= $to
+                    ORDER BY minute
+                    """;
+                cmd.Parameters.AddWithValue("$user", username);
+                cmd.Parameters.AddWithValue("$from", from.ToString("yyyy-MM-dd HH:mm"));
+                cmd.Parameters.AddWithValue("$to", to.ToString("yyyy-MM-dd HH:mm"));
+                using var r = cmd.ExecuteReader();
+                DateTime? openAt = null;
+                DateTime? prevMinute = null;
+                while (r.Read())
+                {
+                    var minute = DateTime.ParseExact(r.GetString(0), "yyyy-MM-dd HH:mm", null);
+                    // 时间间隙 >1 分钟：中间断线，闭合当前 session
+                    if (openAt != null && prevMinute != null && (minute - prevMinute.Value) > TimeSpan.FromMinutes(1))
+                    {
+                        sessions.Add(new SessionInfo { Start = openAt.Value, End = prevMinute.Value.AddMinutes(1) });
+                        openAt = null;
+                    }
+                    if (openAt == null) openAt = minute;
+                    prevMinute = minute;
+                }
+                if (openAt != null && prevMinute != null)
+                    sessions.Add(new SessionInfo { Start = openAt.Value, End = prevMinute.Value.AddMinutes(1) });
+            }
+        }
+
+        // 合并两个来源的 session，按开始时间排序，去重叠
+        var merged = new List<SessionInfo>();
+        foreach (var s in sessions.OrderBy(s => s.Start))
+        {
+            if (merged.Count == 0 || s.Start > (merged[^1].End ?? DateTime.MaxValue))
+            {
+                merged.Add(s);
+            }
+            else
+            {
+                // 与上一条重叠或相接：合并
+                var last = merged[^1];
+                if (s.End != null && (last.End == null || s.End > last.End))
+                    last.End = s.End;
+            }
+        }
+        return merged;
+    }
+
     /// <summary>查询某呼号的分钟聚合趋势（历史部分）</summary>
     public List<MinutePoint> QueryTrendMinute(string username, DateTime from, DateTime to)
     {
@@ -437,4 +562,14 @@ public class LastKnownClient
     public long RecvMsg { get; set; }
     public long SendMsg { get; set; }
     public string SnapshotAt { get; set; } = "";
+}
+
+public class SessionInfo
+{
+    public DateTime Start { get; set; }
+    public DateTime? End { get; set; }   // null = 仍在线
+
+    public double DurationSeconds => End == null
+        ? (DateTime.Now - Start).TotalSeconds
+        : (End.Value - Start).TotalSeconds;
 }

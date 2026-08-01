@@ -91,13 +91,30 @@
       </div>
       <button id="trend-close" class="btn btn-small">关闭</button>
     </div>
-    <div class="trend-body">
+    <div class="trend-tabs">
+      <button id="tab-chart" class="btn btn-small trend-tab active">趋势图</button>
+      <button id="tab-sessions" class="btn btn-small trend-tab">上线记录</button>
+    </div>
+    <div class="trend-body" id="trend-chart-pane">
       <canvas id="trend-canvas" width="860" height="320"></canvas>
       <div class="trend-legend">
         <span class="legend-line legend-send">── 发包</span>
         <span class="legend-line legend-recv">── 收包</span>
         <span class="trend-note">时间轴精度: 分钟（每点 = 该分钟快照增量）</span>
       </div>
+    </div>
+    <div class="trend-body hidden" id="trend-session-pane">
+      <table class="detail-table">
+        <thead>
+          <tr>
+            <th>上线时间</th>
+            <th>下线时间</th>
+            <th>时长</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody id="session-body"></tbody>
+      </table>
     </div>
   </div>
 </div>
