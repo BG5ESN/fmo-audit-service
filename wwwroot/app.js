@@ -43,7 +43,7 @@
 
   // ---------------- 排行榜页 ----------------
 
-  if (page === '/' ) { initLeaderboard(); }
+  if (page === '/' || page === '/index.html') { initLeaderboard(); }
 
   function initLeaderboard() {
     let range = 'custom', order = 'oct';
@@ -124,11 +124,11 @@
         tr.innerHTML = `
           <td class="num"><span class="${rankCls}">${i + 1}</span></td>
           <td><a class="name-cell" data-name="${esc(r.name)}">${esc(r.name)}</a></td>
-          <td class="num">${r.device_count}</td>
-          <td class="num">${fmtBytes(r.total_oct)}</td>
-          <td class="num">${fmtNum(r.total_msg)}</td>
-          <td class="num">${fmtNum(r.total_pkt)}</td>
-          <td class="num">${r.reconnect_count > 0 ? '<span class="reconnect-badge">' + r.reconnect_count + '</span>' : 0}</td>`;
+          <td class="num">${r.deviceCount}</td>
+          <td class="num">${fmtBytes(r.totalOct)}</td>
+          <td class="num">${fmtNum(r.totalMsg)}</td>
+          <td class="num">${fmtNum(r.totalPkt)}</td>
+          <td class="num">${r.reconnectCount > 0 ? '<span class="reconnect-badge">' + r.reconnectCount + '</span>' : 0}</td>`;
         tr.querySelector('.name-cell').onclick = () => toggleDetail(tr, r.name, ord);
         tbody.appendChild(tr);
       });
@@ -154,9 +154,9 @@
       // 按 clientid 聚合
       const byCid = {};
       d.rows.forEach(r => {
-        if (!byCid[r.clientid]) byCid[r.clientid] = { cid: r.clientid, so: 0, ro: 0, sm: 0, rm: 0, sp: 0, rp: 0, rc: 0, ip: r.ip_address };
-        const g = byCid[r.clientid];
-        g.so += r.send_oct; g.ro += r.recv_oct; g.sm += r.send_msg; g.rm += r.recv_msg; g.sp += r.send_pkt; g.rp += r.recv_pkt; g.rc += r.reconnect ? 1 : 0;
+        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, so: 0, ro: 0, sm: 0, rm: 0, sp: 0, rp: 0, rc: 0, ip: r.ipAddress };
+        const g = byCid[r.clientId];
+        g.so += r.sendOct; g.ro += r.recvOct; g.sm += r.sendMsg; g.rm += r.recvMsg; g.sp += r.sendPkt; g.rp += r.recvPkt; g.rc += r.reconnect ? 1 : 0;
       });
       Object.values(byCid).sort((a, b) => (b.so + b.ro) - (a.so + a.ro)).forEach(g => {
         const tr2 = document.createElement('tr');
@@ -180,7 +180,7 @@
 
   // ---------------- 健康页 ----------------
 
-  if (page === '/health') { initHealth(); }
+  if (page === '/health.html') { initHealth(); }
 
   function initHealth() {
     let range = '7d';
@@ -216,23 +216,23 @@
       const ts = rows.map(r => r.ts);
       // 宿主机 CPU/内存/磁盘
       drawLine('host-cpu', 'legend-host', ts, [
-        { name: 'CPU %', color: '#d32f2f', data: rows.map(r => r.host_cpu_pct) },
-        { name: '内存 %', color: '#1565c0', data: rows.map(r => r.host_mem_used_pct) },
-        { name: '磁盘 %', color: '#2e7d32', data: rows.map(r => r.host_disk_used_pct) },
+        { name: 'CPU %', color: '#d32f2f', data: rows.map(r => r.hostCpuPct) },
+        { name: '内存 %', color: '#1565c0', data: rows.map(r => r.hostMemUsedPct) },
+        { name: '磁盘 %', color: '#2e7d32', data: rows.map(r => r.hostDiskUsedPct) },
       ], '%');
       // 网络
       drawLine('host-net', 'legend-net', ts, [
-        { name: '下行 KB/s', color: '#1565c0', data: rows.map(r => r.host_net_recv_kbps) },
-        { name: '上行 KB/s', color: '#e65100', data: rows.map(r => r.host_net_send_kbps) },
+        { name: '下行 KB/s', color: '#1565c0', data: rows.map(r => r.hostNetRecvKbps) },
+        { name: '上行 KB/s', color: '#e65100', data: rows.map(r => r.hostNetSendKbps) },
       ], 'KB/s');
       // EMQX 连接数/消息速率
       drawLine('emqx-basic', 'legend-emqx', ts, [
-        { name: '连接数', color: '#2e7d32', data: rows.map(r => r.emqx_connections) },
-        { name: '消息速率 条/s', color: '#6a1b9a', data: rows.map(r => r.emqx_msg_rate) },
-        { name: '节点负载 load1', color: '#e65100', data: rows.map(r => r.emqx_cpu_pct) },
+        { name: '连接数', color: '#2e7d32', data: rows.map(r => r.emqxConnections) },
+        { name: '消息速率 条/s', color: '#6a1b9a', data: rows.map(r => r.emqxMsgRate) },
+        { name: '节点负载 load1', color: '#e65100', data: rows.map(r => r.emqxCpuPct) },
       ], '');
       // 告警
-      const alarms = rows.map(r => r.emqx_alarms).filter(Boolean);
+      const alarms = rows.map(r => r.emqxAlarms).filter(Boolean);
       const uniq = [...new Set(alarms.flatMap(a => a.split(/,\s*/)))];
       if (uniq.length) {
         $('alarm-card').style.display = '';
@@ -310,7 +310,7 @@
 
   // ---------------- 配置页 ----------------
 
-  if (page === '/settings') { initSettings(); }
+  if (page === '/settings.html') { initSettings(); }
 
   function initSettings() {
     refreshStatus();
@@ -322,7 +322,8 @@
         $('emqx-url').value = d.emqx_url || '';
         $('run-port').textContent = d.listen_port;
         $('run-retention').textContent = d.data_retention_days + ' 天';
-        $('run-status').textContent = d.status || '未采集';
+        $('run-status').textContent = d.status || (d.last_collect_ok ? '采集中' : '未采集');
+        $('run-clients').textContent = d.online_clients ?? 0;
         if (d.configured) $('config-info').textContent = '已连接 EMQX（API Secret 不显示，如需修改请重新填写）';
       } catch (e) { /* 401 */ }
     })();

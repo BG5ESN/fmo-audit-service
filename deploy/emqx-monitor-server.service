@@ -1,0 +1,20 @@
+[Unit]
+Description=EMQX Monitor Server (审计监控)
+After=network.target
+
+[Service]
+Type=simple
+# 二进制与 db 目录（按实际部署路径修改）
+ExecStart=/opt/emqx-monitor/emqx-monitor-server
+WorkingDirectory=/opt/emqx-monitor
+Environment=EMQX_MONITOR_PORT=9527
+Environment=EMQX_MONITOR_DB=/opt/emqx-monitor/emqx-monitor-server.db
+Restart=always
+RestartSec=5
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -73,8 +73,8 @@ app.Use(async (ctx, next) =>
     var authed = ctx.User.Identity?.IsAuthenticated == true;
     var initialized = auth.IsInitialized;
 
-    // 静态资源放行
-    if (path.StartsWith("/css/") || path.StartsWith("/js/") || path == "/favicon.ico")
+    // 静态资源放行（.css/.js/favicon；登录页/setup 页依赖样式）
+    if (path.EndsWith(".css") || path.EndsWith(".js") || path == "/favicon.ico")
     {
         await next();
         return;
@@ -200,6 +200,8 @@ app.MapGet("/api/config", () => Results.Json(new
     listen_port = port,
     data_retention_days = Database.Retention.TotalDays,
     status = collector.LastStatus,
+    online_clients = collector.LastClientCount,
+    last_collect_ok = collector.LastCollectOk,
 }));
 
 app.MapPost("/api/config", async (ConfigRequest req) =>
