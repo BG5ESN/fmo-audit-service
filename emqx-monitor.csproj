@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>EmqxMonitor</RootNamespace>
+    <AssemblyName>emqx-monitor-server</AssemblyName>
     <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishSingleFile>true</PublishSingleFile>
@@ -15,6 +16,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- Windows 健康采集（PerformanceCounter）；Linux 发布 RID 时不带 -->
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.0"
+                      Condition="'$(RuntimeIdentifier)' == 'win-x64' or '$(RuntimeIdentifier)' == 'win-x86' or '$(RuntimeIdentifier)' == 'win-arm64'" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>初始化 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-title">初始化管理员账号</div>
+    <div class="auth-body">
+      <div class="form-row">
+        <label>用户名（至少 3 个字符）</label>
+        <input class="text-input" id="username" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>密码（至少 8 个字符）</label>
+        <input class="text-input" id="password" type="password">
+      </div>
+      <div class="form-row">
+        <label>确认密码</label>
+        <input class="text-input" id="password2" type="password">
+      </div>
+      <button class="btn btn-primary" id="submit" style="width:100%">创建管理员</button>
+      <div class="form-msg" id="msg"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+$('submit').onclick = async () => {
+  const msg = $('msg');
+  msg.className = 'form-msg err';
+  const u = $('username').value.trim(), p = $('password').value, p2 = $('password2').value;
+  if (u.length < 3) { msg.textContent = '用户名至少 3 个字符'; return; }
+  if (p.length < 8) { msg.textContent = '密码至少 8 个字符'; return; }
+  if (p !== p2) { msg.textContent = '两次输入的密码不一致'; return; }
+  try {
+    const r = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    const d = await r.json();
+    if (d.ok) { msg.className = 'form-msg ok'; msg.textContent = '创建成功，正在进入…'; location.href = '/login.html'; }
+    else { msg.textContent = d.error || '创建失败'; }
+  } catch (e) { msg.textContent = '网络错误：' + e.message; }
+};
+$('password2').addEventListener('keydown', e => { if (e.key === 'Enter') $('submit').click(); });
+</script>
+</body>
+</html>

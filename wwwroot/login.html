@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-title">EMQX 审计监控 - 登录</div>
+    <div class="auth-body">
+      <div class="form-row">
+        <label>用户名</label>
+        <input class="text-input" id="username" autocomplete="username">
+      </div>
+      <div class="form-row">
+        <label>密码</label>
+        <input class="text-input" id="password" type="password" autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" id="submit" style="width:100%">登录</button>
+      <div class="form-msg" id="msg"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+$('submit').onclick = async () => {
+  const msg = $('msg');
+  msg.className = 'form-msg err';
+  const u = $('username').value.trim(), p = $('password').value;
+  if (!u || !p) { msg.textContent = '请输入用户名和密码'; return; }
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    const d = await r.json();
+    if (d.ok) location.href = '/';
+    else msg.textContent = d.error || '登录失败';
+  } catch (e) { msg.textContent = '网络错误：' + e.message; }
+};
+$('password').addEventListener('keydown', e => { if (e.key === 'Enter') $('submit').click(); });
+</script>
+</body>
+</html>

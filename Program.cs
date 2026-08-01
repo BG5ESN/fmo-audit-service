@@ -1,288 +1,292 @@
 using EmqxMonitor;
-using System.Net;
-using System.Net.Sockets;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using System.Globalization;
+using System.Security.Claims;
+using System.Text;
 
-const int PortBase = 9527;
-const int PortMax = 9546;   // 最多尝试 20 个端口
+// ---- 配置：端口（环境变量优先，默认 9527）----
+var port = int.TryParse(Environment.GetEnvironmentVariable("EMQX_MONITOR_PORT"), out var envPort) ? envPort : 9527;
 
-// ---- 端口解析：重复启动时打开已有实例，端口被占时自动换 ----
-var port = await ResolvePortAsync();
-if (port == -2) return;   // 已有实例在跑：已打开浏览器，本进程退出
-if (port < 0)
+// ---- 数据库路径（环境变量可指定，默认用户数据目录）----
+var dbPath = Environment.GetEnvironmentVariable("EMQX_MONITOR_DB");
+if (string.IsNullOrEmpty(dbPath))
 {
-    Console.WriteLine("错误：无法找到空闲端口（9527-9546 均被占用）");
-    return;
+    var dataDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "EmqxMonitor");
+    Directory.CreateDirectory(dataDir);
+    dbPath = Path.Combine(dataDir, "emqx-monitor-server.db");
 }
+Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
-// 单文件模式下 wwwroot 内嵌于 exe，运行时自解压到 AppContext.BaseDirectory；
-// ContentRoot 必须指向它，否则静态文件 404
+// 单文件模式下 wwwroot 内嵌于 exe，ContentRoot 指向自解压目录，否则静态文件 404
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     ContentRootPath = AppContext.BaseDirectory
 });
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
-// 数据库放固定用户数据目录（单文件自解压目录是随机路径，重启会丢数据）
-var dataDir = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "EmqxMonitor");
-Directory.CreateDirectory(dataDir);
-var dbPath = Path.Combine(dataDir, "emqx-monitor.db");
 var db = new Database(dbPath);
 var emqx = new EmqxClient();
-var snapshotService = new SnapshotService(emqx, db);
+var auth = new AuthService(db);
+var health = new HostHealthCollector();
+var collector = new CollectorService(emqx, db, health);
+
+// 启动时从持久化配置恢复 EMQX 连接（不探测；连通性由采集循环反馈）
+var savedUrl = db.GetSetting("emqx_url");
+var savedKey = db.GetSetting("emqx_api_key");
+var savedSecret = db.GetSetting("emqx_api_secret");
+if (!string.IsNullOrEmpty(savedUrl) && !string.IsNullOrEmpty(savedKey) && !string.IsNullOrEmpty(savedSecret))
+{
+    emqx.SetCredentials(savedUrl, $"{savedKey}:{savedSecret}");
+    collector.IsConfigured = true;
+}
 
 builder.Services.AddSingleton(db);
 builder.Services.AddSingleton(emqx);
-builder.Services.AddSingleton(snapshotService);
-builder.Services.AddHostedService(sp => sp.GetRequiredService<SnapshotService>());
+builder.Services.AddSingleton(auth);
+builder.Services.AddSingleton(health);
+builder.Services.AddSingleton(collector);
+builder.Services.AddHostedService(sp => sp.GetRequiredService<CollectorService>());
+
+// Cookie 认证：24h 会话，HttpOnly
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(o =>
+    {
+        o.LoginPath = "/login.html";
+        o.ExpireTimeSpan = TimeSpan.FromHours(24);
+        o.SlidingExpiration = false;
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SameSite = SameSiteMode.Lax;
+    });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// 静态文件（前端面板）——从程序集嵌入资源读取（单文件发布不依赖外部 wwwroot）
+app.UseAuthentication();
+
+// ---- 认证门控：未初始化→/setup，未登录→/login，API 一律 401 ----
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+    var authed = ctx.User.Identity?.IsAuthenticated == true;
+    var initialized = auth.IsInitialized;
+
+    // 静态资源放行
+    if (path.StartsWith("/css/") || path.StartsWith("/js/") || path == "/favicon.ico")
+    {
+        await next();
+        return;
+    }
+
+    if (!initialized)
+    {
+        if (path == "/setup.html" || path == "/api/setup")
+        {
+            await next();
+            return;
+        }
+        if (path.StartsWith("/api/"))
+        {
+            ctx.Response.StatusCode = 401;
+            await ctx.Response.WriteAsJsonAsync(new { ok = false, error = "系统未初始化，请先设置管理员账号" });
+            return;
+        }
+        ctx.Response.Redirect("/setup.html");
+        return;
+    }
+
+    if (!authed)
+    {
+        if (path == "/login.html" || path == "/api/login")
+        {
+            await next();
+            return;
+        }
+        if (path.StartsWith("/api/"))
+        {
+            ctx.Response.StatusCode = 401;
+            await ctx.Response.WriteAsJsonAsync(new { ok = false, error = "未登录" });
+            return;
+        }
+        ctx.Response.Redirect("/login.html");
+        return;
+    }
+
+    // 已登录访问登录/设置页 → 回主页
+    if (path == "/login.html" || path == "/setup.html")
+    {
+        ctx.Response.Redirect("/");
+        return;
+    }
+    await next();
+});
+
+app.UseAuthorization();
+
+// ---- 静态文件（嵌入式资源，单文件发布）----
 var embeddedFs = new Microsoft.Extensions.FileProviders.EmbeddedFileProvider(
     typeof(Program).Assembly, "EmqxMonitor.wwwroot");
 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = embeddedFs });
 app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFs });
 
-// POST /api/config — 配置 EMQX 连接并验证连通性
-app.MapPost("/api/config", async (ConfigRequest req) =>
+// 客户端 IP（登录锁定用；反代后取 X-Forwarded-For）
+static string ClientIp(HttpContext ctx)
 {
-    if (string.IsNullOrWhiteSpace(req.Address) || string.IsNullOrWhiteSpace(req.ApiKey) || string.IsNullOrWhiteSpace(req.ApiSecret))
-        return Results.Json(new { ok = false, error = "地址、API Key、API Secret 不能为空" });
+    var fwd = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+    if (!string.IsNullOrEmpty(fwd))
+        return fwd.Split(',')[0].Trim();
+    return ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+}
 
-    // EMQX Basic Auth 要求 key:secret，后端拼装，用户无需手动合并
-    var err = await emqx.ConfigureAsync(req.Address, $"{req.ApiKey.Trim()}:{req.ApiSecret.Trim()}");
-    if (err != null)
-        return Results.Json(new { ok = false, error = err });
+// ---- 认证 API ----
 
-    snapshotService.SetConfigured(true);
-    return Results.Json(new { ok = true });
-});
-
-// POST /api/disconnect — 停止监控（清空配置）
-app.MapPost("/api/disconnect", () =>
-{
-    snapshotService.SetConfigured(false);
-    return Results.Json(new { ok = true });
-});
-
-// GET /api/status — 前端轮询时先探活
 app.MapGet("/api/status", () => Results.Json(new
 {
     ok = true,
+    initialized = auth.IsInitialized,
     configured = emqx.IsConfigured,
-    last_poll_at = snapshotService.LastPollAt?.ToString("HH:mm:ss"),
-    last_poll_ok = snapshotService.LastPollOk,
-    last_error = snapshotService.LastError
+    collecting = collector.IsConfigured,
+    last_status = collector.LastStatus,
+    last_collect_ok = collector.LastCollectOk,
+    last_error = collector.LastError,
+    online_clients = collector.LastClientCount,
 }));
 
-// GET /api/snapshot — 返回最近一次轮询的聚合+异常数据（5s 缓存）
-app.MapGet("/api/snapshot", (SnapshotService service) =>
+app.MapPost("/api/setup", (SetupRequest req) =>
 {
-    if (!emqx.IsConfigured)
-        return Results.Json(new { ok = false, error = "未配置 EMQX 连接" });
-    if (service.LatestSnapshot == null)
-        return Results.Json(new { ok = false, error = "等待首次轮询…" });
-
-    var s = service.LatestSnapshot;
-    return Results.Json(new
-    {
-        ok = true,
-        snapshot_time = s.SnapshotTime,
-        online_users = s.OnlineUsers,
-        offline_users = s.OfflineUsers,
-        users = s.Users
-    });
+    var err = auth.Setup(req.Username ?? "", req.Password ?? "");
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    return Results.Json(new { ok = true });
 });
 
-// GET /api/history/{username}?range=1h|6h|24h — 趋势数据（分钟聚合）
-app.MapGet("/api/history/{username}", (string username, string range, Database database) =>
+app.MapPost("/api/login", async (LoginRequest req, HttpContext ctx) =>
 {
-    var hours = range switch
+    if (string.IsNullOrEmpty(req.Username) || string.IsNullOrEmpty(req.Password))
+        return Results.Json(new { ok = false, error = "请输入用户名和密码" });
+
+    var err = auth.Login(req.Username, req.Password, ClientIp(ctx));
+    if (err != null) return Results.Json(new { ok = false, error = err });
+
+    var claims = new[] { new Claim(ClaimTypes.Name, req.Username.Trim()) };
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    auth.ResetFailures(ClientIp(ctx));
+    return Results.Json(new { ok = true });
+});
+
+app.MapPost("/api/logout", async (HttpContext ctx) =>
+{
+    await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Json(new { ok = true });
+});
+
+app.MapPost("/api/change-password", (ChangePasswordRequest req, HttpContext ctx) =>
+{
+    var user = ctx.User.Identity?.Name ?? "";
+    var err = auth.ChangePassword(user, req.OldPassword ?? "", req.NewPassword ?? "", ClientIp(ctx));
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    return Results.Json(new { ok = true });
+});
+
+// ---- 配置 API ----
+
+app.MapGet("/api/config", () => Results.Json(new
+{
+    ok = true,
+    configured = emqx.IsConfigured,
+    emqx_url = db.GetSetting("emqx_url") ?? "",
+    listen_port = port,
+    data_retention_days = Database.Retention.TotalDays,
+    status = collector.LastStatus,
+}));
+
+app.MapPost("/api/config", async (ConfigRequest req) =>
+{
+    if (string.IsNullOrWhiteSpace(req.EmqxUrl) || string.IsNullOrWhiteSpace(req.ApiKey) || string.IsNullOrWhiteSpace(req.ApiSecret))
+        return Results.Json(new { ok = false, error = "EMQX 地址、API Key、API Secret 不能为空" });
+
+    var err = await emqx.ConfigureAsync(req.EmqxUrl, $"{req.ApiKey.Trim()}:{req.ApiSecret.Trim()}");
+    if (err != null) return Results.Json(new { ok = false, error = err });
+
+    db.SetSetting("emqx_url", req.EmqxUrl.Trim().TrimEnd('/'));
+    db.SetSetting("emqx_api_key", req.ApiKey.Trim());
+    db.SetSetting("emqx_api_secret", req.ApiSecret.Trim());
+    collector.IsConfigured = true;
+    return Results.Json(new { ok = true });
+});
+
+app.MapPost("/api/config/disconnect", () =>
+{
+    collector.IsConfigured = false;
+    db.SetSetting("emqx_url", "");
+    db.SetSetting("emqx_api_key", "");
+    db.SetSetting("emqx_api_secret", "");
+    return Results.Json(new { ok = true });
+});
+
+// ---- 排行榜 API ----
+
+app.MapGet("/api/leaderboard", (string from, string to, string? order, int? limit, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var rows = database.QueryLeaderboard(f, t, order ?? "oct", Math.Clamp(limit ?? 100, 1, 1000));
+    return Results.Json(new { ok = true, from = f, to = t, order = order ?? "oct", rows });
+});
+
+app.MapGet("/api/leaderboard/{name}", (string name, string from, string to, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var rows = database.QueryClientDetail(name, f, t);
+    return Results.Json(new { ok = true, name, from = f, to = t, rows });
+});
+
+// ---- 健康 API ----
+
+app.MapGet("/api/health", (string from, string to, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var rows = database.QueryHealth(f, t);
+    return Results.Json(new { ok = true, from = f, to = t, rows });
+});
+
+// ---- CSV 导出（带 BOM，Excel 直接打开）----
+
+app.MapGet("/api/export.csv", (string from, string to, string? order, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var rows = database.QueryLeaderboard(f, t, order ?? "oct", 5000);
+    var sb = new StringBuilder();
+    sb.Append("\uFEFF排名,呼号,设备数,总字节,总消息,总包数,重连次数\n");
+    for (var i = 0; i < rows.Count; i++)
     {
-        "6h" => 6,
-        "24h" => 24,
-        "72h" => 72,
-        _ => 1
-    };
-    var to = DateTime.Now;
-    var from = to.AddHours(-hours);
-
-    // 1h 内查原始 5s 快照（未聚合部分），更早查分钟表
-    var rawFrom = to.AddHours(-1);
-    var rawFromClamped = from > rawFrom ? from : rawFrom;
-    var raw = database.QueryTrendRaw(username, rawFromClamped, to);
-    var minutes = database.QueryTrendMinute(username, from, rawFromClamped.AddSeconds(-1));
-
-    // 原始快照转分钟粒度（每个 clientid 单独算 末值-初值，再按分钟汇总）
-    var minuteMap = new SortedDictionary<string, (long rp, long sp, long rm, long sm, long ro, long so)>();
-    foreach (var m in minutes)
-        minuteMap[m.Minute] = (m.RecvPkt, m.SendPkt, m.RecvMsg, m.SendMsg, m.RecvOct, m.SendOct);
-
-    // 按 clientid 分组：组内按时间顺序做 末值-初值
-    foreach (var group in raw.GroupBy(t => t.ClientId))
-    {
-        long? prevRp = null, prevSp = null, prevRm = null, prevSm = null, prevRo = null, prevSo = null;
-        string? prevMinute = null;
-        foreach (var t in group)
-        {
-            var minute = t.Time[..16];
-            if (prevMinute == minute && prevRp != null)
-            {
-                var cur = GetBucket(minuteMap, minute);
-                var (prp, psp, prm, psm, pro, pso) =
-                    (prevRp.Value, prevSp!.Value, prevRm!.Value, prevSm!.Value, prevRo!.Value, prevSo!.Value);
-                minuteMap[minute] = (
-                    cur.rp + Math.Max(0, t.RecvPkt - prp),
-                    cur.sp + Math.Max(0, t.SendPkt - psp),
-                    cur.rm + Math.Max(0, t.RecvMsg - prm),
-                    cur.sm + Math.Max(0, t.SendMsg - psm),
-                    cur.ro + Math.Max(0, t.RecvOct - pro),
-                    cur.so + Math.Max(0, t.SendOct - pso));
-            }
-            else
-            {
-                _ = GetBucket(minuteMap, minute); // 该分钟第一行：不累计（等下一行算 delta）
-            }
-            prevRp = t.RecvPkt; prevSp = t.SendPkt; prevRm = t.RecvMsg; prevSm = t.SendMsg;
-            prevRo = t.RecvOct; prevSo = t.SendOct; prevMinute = minute;
-        }
+        var r = rows[i];
+        sb.Append($"{i + 1},{Csv(r.Name)},{r.DeviceCount},{r.TotalOct},{r.TotalMsg},{r.TotalPkt},{r.ReconnectCount}\n");
     }
-
-    var points = minuteMap.Select(kv => new
-    {
-        time = kv.Key,               // yyyy-MM-dd HH:mm（完整时间戳，前端按 range 格式化）
-        recv_pkt = kv.Value.rp,
-        send_pkt = kv.Value.sp,
-        recv_msg = kv.Value.rm,
-        send_msg = kv.Value.sm,
-        recv_oct = kv.Value.ro,
-        send_oct = kv.Value.so
-    }).ToList();
-
-    return Results.Json(new { ok = true, username, range, points });
+    return Results.Text(sb.ToString(), "text/csv; charset=utf-8");
 });
 
-// GET /api/debug — 调试：detector 内部状态
-app.MapGet("/api/debug", () =>
+// ---- 时间范围解析：yyyy-MM-ddTHH:mm（服务器本地时间），跨度≤31 天 ----
+static (string From, string To, string? Error) ParseRange(string from, string to)
 {
-    var dbg = new List<object>();
-    foreach (var u in snapshotService.LatestSnapshot?.Users ?? [])
-    {
-        dbg.Add(new { u.Username, u.TotalRecvPkt, u.TotalSendPkt, u.RateRecvPps, u.RateSendPps });
-    }
-    return Results.Json(dbg);
-});
-
-// GET /api/history/{username}/sessions — 历史上线/下线记录
-app.MapGet("/api/history/{username}/sessions", (string username, string range, Database database) =>
-{
-    var hours = range switch
-    {
-        "6h" => 6,
-        "24h" => 24,
-        "72h" => 72,
-        _ => 1
-    };
-    var to = DateTime.Now;
-    var from = to.AddHours(-hours);
-
-    var sessions = database.QuerySessions(username, from, to);
-    var result = sessions.Select(s => new
-    {
-        start = s.Start.ToString("yyyy-MM-dd HH:mm:ss"),
-        end = s.End?.ToString("yyyy-MM-dd HH:mm:ss"),
-        online = s.End == null,
-        duration_min = Math.Round(s.DurationSeconds / 60.0, 1)
-    }).ToList();
-
-    return Results.Json(new { ok = true, username, range, count = result.Count, sessions = result });
-});
-
-// 启动后自动打开默认浏览器（延迟等 Kestrel 就绪；失败静默，不阻塞服务）
-_ = Task.Run(async () =>
-{
-    await Task.Delay(800);
-    OpenBrowser(port);
-});
-
-// ---- 端口解析与浏览器打开 ----
-
-/// <summary>解析可用端口。返回 -2 = 已有实例运行（已处理）；-1 = 无空闲端口；否则返回端口号</summary>
-static async Task<int> ResolvePortAsync()
-{
-    for (int p = PortBase; p <= PortMax; p++)
-    {
-        if (!await CanBindAsync(p))
-        {
-            // 端口被占用：检查是不是本程序旧实例（响应 /api/status 且含 ok 标记）
-            if (await IsOurInstanceAsync(p))
-            {
-                Console.WriteLine($"检测到监控面板已在运行（http://127.0.0.1:{p}），打开浏览器并退出本进程");
-                OpenBrowser(p);
-                return -2;
-            }
-            continue;   // 被其他程序占用，试下一个端口
-        }
-        return p;
-    }
-    return -1;
+    if (!DateTime.TryParseExact(from, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var f)
+        || !DateTime.TryParseExact(to, "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var t))
+        return ("", "", "时间格式应为 yyyy-MM-ddTHH:mm");
+    if (t < f) return ("", "", "结束时间不能早于开始时间");
+    if (t - f > TimeSpan.FromDays(31)) return ("", "", "时间跨度不能超过 31 天");
+    return (f.ToString("yyyy-MM-dd HH:mm:00"), t.ToString("yyyy-MM-dd HH:mm:00"), null);
 }
 
-/// <summary>尝试绑定端口（成功即空闲）</summary>
-static async Task<bool> CanBindAsync(int port)
-{
-    try
-    {
-        var listener = new TcpListener(IPAddress.Loopback, port);
-        listener.Start();
-        listener.Stop();
-        return true;
-    }
-    catch
-    {
-        return false;
-    }
-}
-
-/// <summary>探测端口上是否运行着本程序（/api/status 返回含 ok 的 JSON）</summary>
-static async Task<bool> IsOurInstanceAsync(int port)
-{
-    try
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(800) };
-        var resp = await client.GetAsync($"http://127.0.0.1:{port}/api/status");
-        if (!resp.IsSuccessStatusCode) return false;
-        var body = await resp.Content.ReadAsStringAsync();
-        return body.Contains("\"ok\"", StringComparison.OrdinalIgnoreCase);
-    }
-    catch
-    {
-        return false;
-    }
-}
-
-/// <summary>用默认浏览器打开面板地址（失败静默）</summary>
-static void OpenBrowser(int port)
-{
-    try
-    {
-        var url = $"http://127.0.0.1:{port}";
-        if (OperatingSystem.IsWindows())
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
-        else if (OperatingSystem.IsLinux())
-            System.Diagnostics.Process.Start("xdg-open", url);
-        else if (OperatingSystem.IsMacOS())
-            System.Diagnostics.Process.Start("open", url);
-    }
-    catch { }
-}
+static string Csv(string v) => v.Contains(',') || v.Contains('"') ? $"\"{v.Replace("\"", "\"\"")}\"" : v;
 
 app.Run();
 
-static (long rp, long sp, long rm, long sm, long ro, long so) GetBucket(
-    SortedDictionary<string, (long rp, long sp, long rm, long sm, long ro, long so)> map, string minute)
-    => map.TryGetValue(minute, out var b) ? b : (0, 0, 0, 0, 0, 0);
-
-record ConfigRequest(string Address, string ApiKey, string ApiSecret);
+record SetupRequest(string? Username, string? Password);
+record LoginRequest(string? Username, string? Password);
+record ConfigRequest(string? EmqxUrl, string? ApiKey, string? ApiSecret);
+record ChangePasswordRequest(string? OldPassword, string? NewPassword);

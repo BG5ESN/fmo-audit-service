@@ -37,6 +37,16 @@ public class EmqxClient
     /// <summary>是否已配置连接</summary>
     public bool IsConfigured => !string.IsNullOrEmpty(_baseUrl) && !string.IsNullOrEmpty(_apiKey);
 
+    /// <summary>直接设置凭据（启动时从持久化配置恢复，不探测连通性；失败会在采集时体现）</summary>
+    public void SetCredentials(string baseUrl, string apiKey)
+    {
+        var url = baseUrl.Trim().TrimEnd('/');
+        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+            url = "http://" + url;
+        _baseUrl = url;
+        _apiKey = apiKey;
+    }
+
     /// <summary>配置 EMQX 连接并验证连通性</summary>
     /// <returns>成功返回 null，失败返回错误消息</returns>
     public async Task<string?> ConfigureAsync(string baseUrl, string apiKey)
@@ -163,6 +173,139 @@ public class EmqxClient
             return null;
         }
     }
+
+    /// <summary>获取节点列表（EMQX 进程负载/内存）。实测 5.8.6：返回裸数组（无 data 包装），
+    /// memory_used/memory_total 是带单位字符串（如 "4.69G"），CPU 无百分比字段，用 load1 代替。</summary>
+    public async Task<List<NodeInfo>> GetNodesAsync()
+    {
+        var list = new List<NodeInfo>();
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/nodes");
+            req.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return list;
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+            if (!TryGetRootArray(doc.RootElement, out var nodes)) return list;
+            foreach (var node in nodes)
+            {
+                list.Add(new NodeInfo
+                {
+                    Node = node.TryGetProperty("node", out var n) ? n.GetString() : null,
+                    Load1 = node.TryGetProperty("load1", out var l1) && l1.TryGetDouble(out var ld) ? ld : null,
+                    MemoryTotal = node.TryGetProperty("memory_total", out var mt) ? ParseMemSize(mt) : null,
+                    MemoryUsed = node.TryGetProperty("memory_used", out var mu) ? ParseMemSize(mu) : null,
+                });
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>获取集群消息计数（messages.received / messages.sent）。实测 5.8.6：返回节点数组。</summary>
+    public async Task<(long? Received, long? Sent)> GetMessageCountsAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/metrics");
+            req.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return (null, null);
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+            // 数组根（多节点）取第一个；兼容 {data:...} 包装
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                if (!root.EnumerateArray().Any()) return (null, null);
+                root = root[0];
+            }
+            else if (root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Array && d.GetArrayLength() > 0)
+            {
+                root = d[0];
+            }
+            long? recv = root.TryGetProperty("messages.received", out var mr) && mr.TryGetInt64(out var mrr) ? mrr : null;
+            long? sent = root.TryGetProperty("messages.sent", out var ms) && ms.TryGetInt64(out var mss) ? mss : null;
+            return (recv, sent);
+        }
+        catch { return (null, null); }
+    }
+
+    /// <summary>兼容两种响应外壳：裸数组 或 {data:[...]}</summary>
+    private static bool TryGetRootArray(JsonElement root, out JsonElement.ArrayEnumerator arr)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            arr = root.EnumerateArray();
+            return true;
+        }
+        if (root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Array)
+        {
+            arr = d.EnumerateArray();
+            return true;
+        }
+        arr = default;
+        return false;
+    }
+
+    /// <summary>解析 EMQX 带单位内存字符串（"4.69G" / "512M" / "1234"）→ 字节数</summary>
+    private static long? ParseMemSize(JsonElement el)
+    {
+        var s = el.GetString();
+        if (string.IsNullOrEmpty(s)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"^([\d.]+)\s*([KMGTP]?B?)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success || !double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var v))
+            return null;
+        return m.Groups[2].Value.ToUpperInvariant() switch
+        {
+            "" or "B" => (long)v,
+            "K" or "KB" => (long)(v * 1024),
+            "M" or "MB" => (long)(v * 1024 * 1024),
+            "G" or "GB" => (long)(v * 1024 * 1024 * 1024),
+            "T" or "TB" => (long)(v * 1024 * 1024 * 1024 * 1024),
+            _ => null,
+        };
+    }
+
+    /// <summary>获取活跃告警名列表（逗号分隔）</summary>
+    public async Task<string> GetActiveAlarmsAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/alarms?activated=true");
+            req.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return "";
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return "";
+            var names = new List<string>();
+            foreach (var a in data.EnumerateArray())
+            {
+                if (a.TryGetProperty("activated", out var act) && act.ValueKind == JsonValueKind.True
+                    && a.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } n)
+                    names.Add(n);
+            }
+            return string.Join(", ", names.Distinct());
+        }
+        catch { return ""; }
+    }
+}
+
+public class NodeInfo
+{
+    public string? Node { get; set; }
+    /// <summary>系统 1 分钟负载均值（EMQX 5.x 无 CPU 百分比字段）</summary>
+    public double? Load1 { get; set; }
+    public long? MemoryTotal { get; set; }
+    public long? MemoryUsed { get; set; }
 }
 
 public class ClientsResult

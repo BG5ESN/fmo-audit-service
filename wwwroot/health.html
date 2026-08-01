@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>健康 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-title">EMQX 审计监控</span>
+  <nav class="topbar-nav">
+    <a href="/">排行榜</a>
+    <a href="/health" class="active">健康</a>
+    <a href="/settings">配置</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="collect-status"></span>
+    <a id="logout">退出登录</a>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <span class="filter-label">时间范围</span>
+  <button class="chip" data-range="today">今天</button>
+  <button class="chip" data-range="yesterday">昨天</button>
+  <button class="chip active" data-range="7d">近7天</button>
+  <button class="chip" data-range="30d">近30天</button>
+  <span class="filter-label" style="margin-left:8px">起始</span>
+  <input type="datetime-local" id="from">
+  <span class="filter-label">至</span>
+  <input type="datetime-local" id="to">
+  <button class="btn btn-small btn-primary" id="query">查询</button>
+</div>
+
+<div class="chart-box">
+  <div class="chart-card">
+    <div class="chart-title">宿主机 CPU / 内存 / 磁盘（%）</div>
+    <div class="legend" id="legend-host"></div>
+    <div class="chart-canvas-wrap"><canvas id="host-cpu"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">宿主机网络（KB/s）</div>
+    <div class="legend" id="legend-net"></div>
+    <div class="chart-canvas-wrap"><canvas id="host-net"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">EMQX 连接数 / 消息速率（条/s）</div>
+    <div class="legend" id="legend-emqx"></div>
+    <div class="chart-canvas-wrap"><canvas id="emqx-basic"></canvas></div>
+  </div>
+  <div class="chart-card" id="alarm-card" style="display:none">
+    <div class="chart-title">活跃告警</div>
+    <div class="chart-canvas-wrap" style="font-size:13px;color:#c62828" id="alarm-list"></div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

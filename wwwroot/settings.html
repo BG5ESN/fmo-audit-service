@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配置 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-title">EMQX 审计监控</span>
+  <nav class="topbar-nav">
+    <a href="/">排行榜</a>
+    <a href="/health">健康</a>
+    <a href="/settings" class="active">配置</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="collect-status"></span>
+    <a id="logout">退出登录</a>
+  </div>
+</div>
+
+<div class="chart-box" style="max-width:720px">
+  <div class="config-section">
+    <div class="config-section-title">EMQX 连接</div>
+    <div class="config-section-body">
+      <div class="form-row">
+        <label>EMQX 地址（如 http://192.168.1.100:18083）</label>
+        <input class="text-input" id="emqx-url" placeholder="http://服务器IP:18083">
+      </div>
+      <div class="form-row">
+        <label>API Key</label>
+        <input class="text-input" id="api-key" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>API Secret</label>
+        <input class="text-input" id="api-secret" type="password" autocomplete="off">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" id="save-config">保存并连接</button>
+        <button class="btn" id="disconnect">断开监控</button>
+        <span id="config-msg" class="form-msg" style="margin:0"></span>
+      </div>
+      <div class="form-msg" id="config-info" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">修改管理员密码</div>
+    <div class="config-section-body">
+      <div class="form-row">
+        <label>旧密码</label>
+        <input class="text-input" id="old-pw" type="password" autocomplete="current-password">
+      </div>
+      <div class="form-row">
+        <label>新密码（至少 8 个字符）</label>
+        <input class="text-input" id="new-pw" type="password" autocomplete="new-password">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" id="change-pw">修改密码</button>
+        <span id="pw-msg" class="form-msg" style="margin:0"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">运行信息</div>
+    <div class="config-section-body">
+      <div class="kv">监听端口：<b id="run-port"></b></div>
+      <div class="kv">数据保留：<b id="run-retention"></b></div>
+      <div class="kv">采集状态：<b id="run-status"></b></div>
+      <div class="kv">在线客户端：<b id="run-clients"></b></div>
+      <div class="kv" style="margin-top:8px;color:#999">采集精度：1 分钟。增量数据仅在客户端在线时记录，离线期间无流量数据。</div>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
