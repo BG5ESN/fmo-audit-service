@@ -2,11 +2,20 @@ using EmqxMonitor;
 
 const int Port = 9527;
 
-var builder = WebApplication.CreateBuilder(args);
+// 单文件模式下 wwwroot 内嵌于 exe，运行时自解压到 AppContext.BaseDirectory；
+// ContentRoot 必须指向它，否则静态文件 404
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    ContentRootPath = AppContext.BaseDirectory
+});
 builder.WebHost.UseUrls($"http://127.0.0.1:{Port}");
 
-// 数据库（exe 同目录）
-var dbPath = Path.Combine(AppContext.BaseDirectory, "emqx-monitor.db");
+// 数据库放固定用户数据目录（单文件自解压目录是随机路径，重启会丢数据）
+var dataDir = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "EmqxMonitor");
+Directory.CreateDirectory(dataDir);
+var dbPath = Path.Combine(dataDir, "emqx-monitor.db");
 var db = new Database(dbPath);
 var emqx = new EmqxClient();
 var snapshotService = new SnapshotService(emqx, db);
@@ -18,9 +27,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SnapshotService>()
 
 var app = builder.Build();
 
-// 静态文件（前端面板）
-app.UseDefaultFiles();
-app.UseStaticFiles();
+// 静态文件（前端面板）——从程序集嵌入资源读取（单文件发布不依赖外部 wwwroot）
+var embeddedFs = new Microsoft.Extensions.FileProviders.EmbeddedFileProvider(
+    typeof(Program).Assembly, "EmqxMonitor.wwwroot");
+app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = embeddedFs });
+app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFs });
 
 // POST /api/config — 配置 EMQX 连接并验证连通性
 app.MapPost("/api/config", async (ConfigRequest req) =>
@@ -172,6 +183,23 @@ app.MapGet("/api/history/{username}/sessions", (string username, string range, D
     }).ToList();
 
     return Results.Json(new { ok = true, username, range, count = result.Count, sessions = result });
+});
+
+// 启动后自动打开默认浏览器（延迟等 Kestrel 就绪；失败静默，不阻塞服务）
+_ = Task.Run(async () =>
+{
+    await Task.Delay(800);
+    try
+    {
+        var url = $"http://127.0.0.1:{Port}";
+        if (OperatingSystem.IsWindows())
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
+        else if (OperatingSystem.IsLinux())
+            System.Diagnostics.Process.Start("xdg-open", url);
+        else if (OperatingSystem.IsMacOS())
+            System.Diagnostics.Process.Start("open", url);
+    }
+    catch { }
 });
 
 app.Run();
