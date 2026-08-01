@@ -38,6 +38,20 @@
   <button class="chip" data-order="bytes">字节数</button>
   <button class="btn btn-small btn-primary" id="query">查询</button>
   <button class="btn btn-small" id="export">导出 CSV</button>
+  <span class="filter-label" style="margin-left:12px">统计周期</span>
+  <button class="chip" data-bucket="1m">1分钟</button>
+  <button class="chip active" data-bucket="5m">5分钟</button>
+  <button class="chip" data-bucket="1h">1小时</button>
+</div>
+
+<div class="chart-box" style="padding-bottom:4px">
+  <div class="chart-card">
+    <div class="chart-title">全员发包时间轴（悬停查看该时间点详情）</div>
+    <div class="chart-canvas-wrap" style="position:relative">
+      <canvas id="timeline-canvas" style="height:200px"></canvas>
+      <div id="timeline-tooltip" style="position:absolute;display:none;background:#fff;border:1px solid #333;padding:8px 10px;font-size:12px;line-height:1.6;pointer-events:none;z-index:10;min-width:170px"></div>
+    </div>
+  </div>
 </div>
 
 <div class="stats-bar">

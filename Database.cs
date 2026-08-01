@@ -503,6 +503,50 @@ public class Database
         }
     }
 
+    /// <summary>主题时间轴：按桶聚合（1m 原始分钟 / 5m / 1h），含该桶内去重发言人数</summary>
+    public List<TopicTimelineRow> QueryTopicTimeline(string topic, string from, string to, string bucket)
+    {
+        // 桶表达式（ts 格式 yyyy-MM-dd HH:mm:00）
+        var bucketExpr = bucket switch
+        {
+            "5m" => "substr(ts,1,14) || printf('%02d', CAST(substr(ts,15,2) AS INTEGER)/5*5) || ':00'",
+            "1h" => "substr(ts,1,13) || ':00:00'",
+            _ => "ts"
+        };
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT {bucketExpr} AS bucket_ts,
+                       SUM(msg_count) AS total_msg,
+                       SUM(bytes)     AS total_bytes,
+                       COUNT(DISTINCT COALESCE(username, clientid)) AS user_count
+                FROM topic_stats
+                WHERE ts BETWEEN $from AND $to
+                  AND (topic = $topic OR topic LIKE $topic || '/%')
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts
+                """;
+            cmd.Parameters.AddWithValue("$from", from);
+            cmd.Parameters.AddWithValue("$to", to);
+            cmd.Parameters.AddWithValue("$topic", topic);
+            var list = new List<TopicTimelineRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new TopicTimelineRow
+                {
+                    Ts = r.GetString(0),
+                    MsgCount = r.IsDBNull(1) ? 0 : r.GetInt64(1),
+                    Bytes = r.IsDBNull(2) ? 0 : r.GetInt64(2),
+                    UserCount = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                });
+            }
+            return list;
+        }
+    }
+
     // ---------------- 过期清理 ----------------
 
     /// <summary>删除 30 天前的增量与健康数据（分批删除，避免长事务锁库）</summary>
@@ -527,6 +571,15 @@ public class Database
             }
         }
     }
+}
+
+/// <summary>主题时间轴行（分钟级）</summary>
+public class TopicTimelineRow
+{
+    public string Ts { get; init; } = "";
+    public long MsgCount { get; init; }
+    public long Bytes { get; init; }
+    public long UserCount { get; init; }
 }
 
 /// <summary>主题统计行（规则引擎消息事件按 topic+clientid+分钟聚合）</summary>

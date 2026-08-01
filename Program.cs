@@ -382,6 +382,17 @@ app.MapGet("/api/topic-leaderboard/{name}", (string name, string from, string to
     return Results.Json(new { ok = true, name, topic, from = f, to = t, rows });
 });
 
+// GET /api/topic-timeline — 时间轴（全员总量按时间桶聚合，1m/5m/1h）
+app.MapGet("/api/topic-timeline", (string from, string to, string? bucket, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var topic = db.GetSetting("topic_name") ?? "FMO/RAW";
+    var b = bucket is "5m" or "1h" ? bucket : "1m";
+    var rows = database.QueryTopicTimeline(topic, f, t, b);
+    return Results.Json(new { ok = true, topic, from = f, to = t, bucket = b, rows });
+});
+
 // GET /api/topic-export.csv — 主题排行 CSV 导出
 app.MapGet("/api/topic-export.csv", (string from, string to, string? order, Database database) =>
 {

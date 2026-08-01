@@ -316,6 +316,7 @@
     const now = new Date();
     const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
     let order = 'msg';
+    let bucket = '5m';
     let topic = 'FMO/RAW';
 
     // 默认近 7 天
@@ -360,6 +361,14 @@
         query();
       };
     });
+    document.querySelectorAll('.filter-bar .chip[data-bucket]').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.filter-bar .chip[data-bucket]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        bucket = b.dataset.bucket;
+        loadTimeline();
+      };
+    });
     $('query').onclick = query;
     $('export').onclick = () => {
       const f = $('from').value, t = $('to').value;
@@ -377,8 +386,114 @@
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
         $('total-rows').textContent = d.rows.length ? `共 ${d.rows.length} 个呼号` : '';
         render(d.rows, d.topic);
+        loadTimeline();
       } catch (e) { /* 401 */ }
       finally { $('query').disabled = false; }
+    }
+
+    // ---- 时间轴：全员总量按时间桶（1m/5m/1h）----
+    async function loadTimeline() {
+      const f = $('from').value, t = $('to').value;
+      if (!f || !t) return;
+      try {
+        const d = await api(`/api/topic-timeline?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&bucket=${bucket}`);
+        if (!d.ok) return;
+        drawTimeline(d.rows);
+      } catch (e) { /* 401 */ }
+    }
+
+    function drawTimeline(rows) {
+      const cv = $('timeline-canvas');
+      const tip = $('timeline-tooltip');
+      const dpr = window.devicePixelRatio || 1;
+      const W = cv.clientWidth, H = cv.clientHeight;
+      cv.width = W * dpr; cv.height = H * dpr;
+      const ctx = cv.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      const padL = 52, padR = 12, padT = 10, padB = 24;
+      const iw = W - padL - padR, ih = H - padT - padB;
+      const n = rows.length;
+      let max = n ? Math.max(...rows.map(r => r.msgCount)) : 0;
+      if (max <= 0) max = 1;
+      max = max * 1.1;
+      const xOf = i => padL + iw * i / Math.max(1, n - 1);
+      const yOf = v => padT + ih * (1 - v / max);
+
+      const state = { rows, ctx, W, H, padL, padR, padT, padB, iw, ih, n, max, xOf, yOf, tip };
+
+      // 静态绘制（网格 + 线 + 面积）
+      const drawStatic = s => {
+        const c = s.ctx;
+        c.clearRect(0, 0, s.W, s.H);
+        c.strokeStyle = '#e5e5e5';
+        c.fillStyle = '#999';
+        c.font = '10px sans-serif';
+        c.lineWidth = 1;
+        for (let i = 0; i <= 4; i++) {
+          const y = s.padT + s.ih * i / 4;
+          c.beginPath(); c.moveTo(s.padL, y); c.lineTo(s.W - s.padR, y); c.stroke();
+          const val = s.max * (1 - i / 4);
+          c.textAlign = 'right';
+          c.fillText(val >= 1000 ? (val / 1000).toFixed(1) + 'k' : Math.round(val).toString(), s.padL - 5, y + 3);
+        }
+        c.textAlign = 'center';
+        for (let i = 0; i < Math.min(6, s.n); i++) {
+          const idx = Math.round(i * (s.n - 1) / Math.max(1, Math.min(6, s.n) - 1));
+          c.fillText(s.rows[idx].ts.slice(5, 16), s.xOf(idx), s.H - 8);
+        }
+        if (s.n === 0) {
+          c.fillStyle = '#999';
+          c.fillText('该时间段无数据', s.W / 2 - 40, s.H / 2);
+          return;
+        }
+        c.strokeStyle = '#1565c0';
+        c.lineWidth = 1.5;
+        c.beginPath();
+        for (let i = 0; i < s.n; i++) {
+          const x = s.xOf(i), y = s.yOf(s.rows[i].msgCount);
+          if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+        }
+        c.stroke();
+        c.lineTo(s.xOf(s.n - 1), s.padT + s.ih);
+        c.lineTo(s.xOf(0), s.padT + s.ih);
+        c.closePath();
+        c.fillStyle = 'rgba(21,101,192,0.08)';
+        c.fill();
+      };
+
+      // hover 叠加（只画高亮 + tooltip）
+      const drawHover = (s, idx) => {
+        drawStatic(s);
+        if (idx < 0) { s.tip.style.display = 'none'; return; }
+        const r = s.rows[idx];
+        const x = s.xOf(idx), y = s.yOf(r.msgCount);
+        const c = s.ctx;
+        c.fillStyle = '#c62828';
+        c.beginPath(); c.arc(x, y, 4, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = 'rgba(198,40,40,0.4)';
+        c.beginPath(); c.moveTo(x, s.padT); c.lineTo(x, s.padT + s.ih); c.stroke();
+        s.tip.style.display = 'block';
+        s.tip.innerHTML = `<b>${r.ts}</b><br>发言 ${r.userCount} 人<br>消息 ${fmtNum(r.msgCount)} 条<br>数据量 ${fmtBytes(r.bytes)}`;
+        const tipW = s.tip.offsetWidth, tipH = s.tip.offsetHeight;
+        let tx = x - tipW / 2, ty = y - tipH - 12;
+        if (tx < 4) tx = 4;
+        if (tx + tipW > s.W - 4) tx = s.W - tipW - 4;
+        if (ty < 4) ty = y + 14;
+        s.tip.style.left = tx + 'px';
+        s.tip.style.top = ty + 'px';
+      };
+
+      drawStatic(state);
+
+      // 绑定 hover（每次重绘只更新 state）
+      cv.onmousemove = e => {
+        const rect = cv.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = state.n < 2 ? 0 : Math.max(0, Math.min(state.n - 1, Math.round((mx - state.padL) / state.iw * (state.n - 1))));
+        drawHover(state, idx);
+      };
+      cv.onmouseleave = () => drawHover(state, -1);
     }
 
     function render(rows, tpc) {
