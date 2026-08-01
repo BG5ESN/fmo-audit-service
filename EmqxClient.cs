@@ -297,6 +297,181 @@ public class EmqxClient
         }
         catch { return ""; }
     }
+
+    // ---------------- 主题统计：规则引擎自动配置（实测 5.8.6 格式） ----------------
+
+    /// <summary>连接器/规则固定命名（单实例管理；重复调用幂等更新）</summary>
+    public const string TopicConnectorName = "emqx-monitor-ingest";
+    public const string TopicBridgeName = "emqx-monitor-bridge";
+    public const string TopicRuleName = "emqx-monitor-topic-rule";
+
+    /// <summary>
+    /// 创建/更新主题统计规则引擎（连接器 + bridge v2 + 规则），幂等。
+    /// 实测 5.8.6 要点：
+    ///  - 连接器字段平铺（type=http、name、url、headers）
+    ///  - 规则 action 引用 bridge（不是 connector！）："webhook:{bridgeName}"，EMQX 自动规范化为 http:
+    ///  - bridge 必须再建一层（POST /bridges，平铺 url/method/headers/body）
+    ///  - 规则 SQL 不能用 length()（无此函数），payload 由 monitor 端解码计算字节数
+    /// </summary>
+    public async Task<string?> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
+    {
+        var connectorBody = JsonSerializer.Serialize(new
+        {
+            type = "http",
+            name = TopicConnectorName,
+            description = "EMQX Monitor topic ingest",
+            url = webhookUrl,
+            headers = new Dictionary<string, string>
+            {
+                ["content-type"] = "application/json",
+                ["x-ingest-token"] = token
+            },
+            enable = true,
+            pool_size = 8,
+            enable_pipelining = 100,
+            connect_timeout = "15s"
+        });
+
+        // 1) 连接器：存在则更新，否则创建
+        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
+        {
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody);
+            if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
+        }
+        else
+        {
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody);
+            if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
+        }
+
+        // 2) bridge v2：平铺 url/method/headers/body（实测 required: url）
+        //    body 必须模板化为完整 JSON——裸 ${payload} 发的是非 JSON 内容，monitor 解析失败
+        var bridgeBody = JsonSerializer.Serialize(new
+        {
+            type = "http",
+            name = TopicBridgeName,
+            description = "EMQX Monitor topic bridge",
+            url = webhookUrl,
+            method = "post",
+            headers = new Dictionary<string, string>
+            {
+                ["content-type"] = "application/json",
+                ["x-ingest-token"] = token
+            },
+            body = "{\"topic\":\"${topic}\",\"username\":\"${username}\",\"clientid\":\"${clientid}\",\"payload\":\"${payload}\",\"qos\":\"${qos}\"}",
+            enable = true,
+            max_retries = 2
+        });
+        var bridgeId = $"webhook:{TopicBridgeName}";
+        var existingBridge = await SendAsync(HttpMethod.Get, $"/api/v5/bridges/{bridgeId}", null);
+        if (existingBridge.Error == null && existingBridge.Body != null && existingBridge.Body.Contains($"\"name\":\"{TopicBridgeName}\""))
+        {
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody);
+            if (upd.Error != null) return $"更新桥接失败: {upd.Error}";
+        }
+        else
+        {
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody);
+            if (cre.Error != null) return $"创建桥接失败: {cre.Error}";
+        }
+
+        // 3) 规则：SQL 用 "topic/#" 通配（# 匹配零级或多级，覆盖精确主题与子主题）
+        var ruleSql = $"SELECT clientid, username, topic, payload, qos, timestamp FROM \"{topic}/#\"";
+        var ruleBody = JsonSerializer.Serialize(new
+        {
+            name = TopicRuleName,
+            sql = ruleSql,
+            actions = new[] { $"webhook:{TopicBridgeName}" },
+            enable = true,
+            description = "EMQX Monitor topic ingest rule"
+        });
+
+        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
+        if (ruleId != null)
+        {
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody);
+            if (upd.Error != null) return $"更新规则失败: {upd.Error}";
+        }
+        else
+        {
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody);
+            if (cre.Error != null) return $"创建规则失败: {cre.Error}";
+        }
+        return null;
+    }
+
+    /// <summary>删除主题统计规则、桥接与连接器（幂等）</summary>
+    public async Task<string?> RemoveTopicRuleAsync()
+    {
+        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
+        if (ruleId != null)
+        {
+            var del = await SendAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}", null);
+            if (del.Error != null) return $"删除规则失败: {del.Error}";
+        }
+        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null);
+        if (bdel.Error != null && !bdel.Error.Contains("404")) return $"删除桥接失败: {bdel.Error}";
+        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
+        return null;
+    }
+
+    /// <summary>按名称查找规则 ID</summary>
+    private async Task<string?> FindRuleIdByNameAsync(string name)
+    {
+        var resp = await SendAsync(HttpMethod.Get, "/api/v5/rules", null);
+        if (resp.Error != null) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var r in data.EnumerateArray())
+                {
+                    if (r.TryGetProperty("name", out var n) && n.GetString() == name
+                        && r.TryGetProperty("id", out var id))
+                        return id.GetString();
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>通用带认证的请求（返回 Body + 错误码）</summary>
+    private async Task<(string? Error, string? Body)> SendAsync(HttpMethod method, string path, string? jsonBody)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(method, $"{_baseUrl}{path}");
+            req.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
+            if (jsonBody != null)
+                req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            using var resp = await _http.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+            {
+                try
+                {
+                    var err = JsonSerializer.Deserialize<EmqxError>(body);
+                    if (err?.Code != null) return (err.Code, body);
+                }
+                catch { }
+                return ($"HTTP_{(int)resp.StatusCode}", body);
+            }
+            return (null, body);
+        }
+        catch (TaskCanceledException)
+        {
+            return ("请求超时", null);
+        }
+        catch (HttpRequestException ex)
+        {
+            return ($"网络错误: {ex.Message}", null);
+        }
+    }
 }
 
 public class NodeInfo

@@ -11,6 +11,7 @@
   <span class="topbar-title">EMQX 审计监控</span>
   <nav class="topbar-nav">
     <a href="/">排行榜</a>
+    <a href="/topics.html">主题统计</a>
     <a href="/health.html">健康</a>
     <a href="/settings.html" class="active">配置</a>
   </nav>
@@ -42,6 +43,29 @@
         <span id="config-msg" class="form-msg" style="margin:0"></span>
       </div>
       <div class="form-msg" id="config-info" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">主题统计（规则引擎消息统计）</div>
+    <div class="config-section-body">
+      <div class="kv">状态：<b id="topic-status">未启用</b></div>
+      <div class="kv">已接收消息：<b id="topic-total">0</b> <span style="color:#999">（最后接收 <span id="topic-last">-</span>）</span></div>
+      <div class="kv" style="margin-top:4px">Webhook 地址：<b id="topic-webhook" class="mono"></b></div>
+      <div class="form-row" style="margin-top:10px">
+        <label>统计主题（规则引擎按 主题/# 匹配，含子主题）</label>
+        <input class="text-input" id="topic-name" placeholder="FMO/RAW">
+      </div>
+      <div class="form-row">
+        <label>Webhook 地址（EMQX 能访问到的本服务地址，默认自动生成）</label>
+        <input class="text-input" id="topic-webhook-url" placeholder="http://服务器IP:9527/api/ingest">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" id="topic-enable">启用主题统计</button>
+        <button class="btn" id="topic-disable">停用</button>
+        <span id="topic-msg" class="form-msg" style="margin:0"></span>
+      </div>
+      <div class="form-msg" id="topic-info" style="margin-top:10px;color:#999">启用后自动在 EMQX 上创建规则引擎（连接器 emqx-monitor-ingest + 规则），只统计该主题下的消息，其他主题不采集。</div>
     </div>
   </div>
 

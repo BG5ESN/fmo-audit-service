@@ -46,6 +46,18 @@ public class Database
             CREATE INDEX IF NOT EXISTS idx_min_ts ON minute_stats(ts);
             CREATE INDEX IF NOT EXISTS idx_min_user_ts ON minute_stats(username, ts);
 
+            CREATE TABLE IF NOT EXISTS topic_stats (
+                topic     TEXT    NOT NULL,
+                username  TEXT,
+                clientid  TEXT    NOT NULL,
+                ts        TEXT    NOT NULL,   -- 'yyyy-MM-dd HH:mm:00' 分钟级
+                msg_count INTEGER NOT NULL DEFAULT 0,
+                bytes     INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (topic, clientid, ts)
+            );
+            CREATE INDEX IF NOT EXISTS idx_topic_ts ON topic_stats(ts);
+            CREATE INDEX IF NOT EXISTS idx_topic_user_ts ON topic_stats(topic, username, ts);
+
             CREATE TABLE IF NOT EXISTS health_snapshots (
                 ts                TEXT    PRIMARY KEY,   -- 'yyyy-MM-dd HH:mm:00'
                 host_cpu_pct      REAL,
@@ -372,6 +384,125 @@ public class Database
         }
     }
 
+    // ---------------- topic_stats（规则引擎消息事件聚合） ----------------
+
+    /// <summary>写入一批主题统计行（UPSERT 累加：同一 (topic,clientid,ts) 的聚合批次合并）</summary>
+    public void WriteTopicStats(IEnumerable<TopicStatRow> rows)
+    {
+        var list = rows.ToList();
+        if (list.Count == 0) return;
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO topic_stats (topic, username, clientid, ts, msg_count, bytes)
+                VALUES ($topic, $user, $cid, $ts, $msg, $bytes)
+                ON CONFLICT(topic, clientid, ts) DO UPDATE SET
+                    msg_count = msg_count + excluded.msg_count,
+                    bytes = bytes + excluded.bytes
+                """;
+            var p = new Dictionary<string, SqliteParameter>
+            {
+                ["$topic"] = cmd.Parameters.Add("$topic", SqliteType.Text),
+                ["$user"] = cmd.Parameters.Add("$user", SqliteType.Text),
+                ["$cid"] = cmd.Parameters.Add("$cid", SqliteType.Text),
+                ["$ts"] = cmd.Parameters.Add("$ts", SqliteType.Text),
+                ["$msg"] = cmd.Parameters.Add("$msg", SqliteType.Integer),
+                ["$bytes"] = cmd.Parameters.Add("$bytes", SqliteType.Integer),
+            };
+            foreach (var r in list)
+            {
+                p["$topic"].Value = r.Topic;
+                p["$user"].Value = (object?)r.Username ?? DBNull.Value;
+                p["$cid"].Value = r.ClientId;
+                p["$ts"].Value = r.Ts;
+                p["$msg"].Value = r.MsgCount;
+                p["$bytes"].Value = r.Bytes;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    /// <summary>主题统计排行榜：按 呼号(或匿名clientid) 聚合，消息数/字节数从大到小</summary>
+    public List<TopicLeaderboardRow> QueryTopicLeaderboard(string topic, string from, string to, string order, int limit = 100)
+    {
+        var orderCol = order == "bytes" ? "total_bytes" : "total_msg";
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT COALESCE(username, clientid) AS name,
+                       SUM(msg_count) AS total_msg,
+                       SUM(bytes)     AS total_bytes,
+                       COUNT(DISTINCT clientid) AS device_count
+                FROM topic_stats
+                WHERE ts BETWEEN $from AND $to
+                  AND (topic = $topic OR topic LIKE $topic || '/%')
+                GROUP BY name
+                ORDER BY {orderCol} DESC
+                LIMIT $limit
+                """;
+            cmd.Parameters.AddWithValue("$from", from);
+            cmd.Parameters.AddWithValue("$to", to);
+            cmd.Parameters.AddWithValue("$topic", topic);
+            cmd.Parameters.AddWithValue("$limit", limit);
+            var list = new List<TopicLeaderboardRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new TopicLeaderboardRow
+                {
+                    Name = r.GetString(0),
+                    TotalMsg = r.IsDBNull(1) ? 0 : r.GetInt64(1),
+                    TotalBytes = r.IsDBNull(2) ? 0 : r.GetInt64(2),
+                    DeviceCount = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                });
+            }
+            return list;
+        }
+    }
+
+    /// <summary>主题统计明细：某呼号下每个 clientid 的分钟级聚合（含实际 topic）</summary>
+    public List<TopicDetailRow> QueryTopicDetail(string topic, string name, string from, string to)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT topic, clientid, ts, msg_count, bytes
+                FROM topic_stats
+                WHERE ts BETWEEN $from AND $to
+                  AND (topic = $topic OR topic LIKE $topic || '/%')
+                  AND COALESCE(username, clientid) = $name
+                ORDER BY clientid, ts
+                """;
+            cmd.Parameters.AddWithValue("$from", from);
+            cmd.Parameters.AddWithValue("$to", to);
+            cmd.Parameters.AddWithValue("$topic", topic);
+            cmd.Parameters.AddWithValue("$name", name);
+            var list = new List<TopicDetailRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new TopicDetailRow
+                {
+                    Topic = r.GetString(0),
+                    ClientId = r.GetString(1),
+                    Ts = r.GetString(2),
+                    MsgCount = r.GetInt64(3),
+                    Bytes = r.GetInt64(4),
+                });
+            }
+            return list;
+        }
+    }
+
     // ---------------- 过期清理 ----------------
 
     /// <summary>删除 30 天前的增量与健康数据（分批删除，避免长事务锁库）</summary>
@@ -381,7 +512,7 @@ public class Database
         lock (_lock)
         {
             using var conn = Open();
-            foreach (var table in new[] { "minute_stats", "health_snapshots" })
+            foreach (var table in new[] { "minute_stats", "health_snapshots", "topic_stats" })
             {
                 // 分批删：每批 20000 行，直到删不动
                 for (var i = 0; i < 200; i++)
@@ -395,6 +526,36 @@ public class Database
             }
         }
     }
+}
+
+/// <summary>主题统计行（规则引擎消息事件按 topic+clientid+分钟聚合）</summary>
+public class TopicStatRow
+{
+    public required string Topic { get; init; }
+    public string? Username { get; init; }
+    public required string ClientId { get; init; }
+    public required string Ts { get; init; }
+    public long MsgCount { get; init; }
+    public long Bytes { get; init; }
+}
+
+/// <summary>主题统计排行榜行</summary>
+public class TopicLeaderboardRow
+{
+    public string Name { get; init; } = "";
+    public long TotalMsg { get; init; }
+    public long TotalBytes { get; init; }
+    public long DeviceCount { get; init; }
+}
+
+/// <summary>主题统计明细行</summary>
+public class TopicDetailRow
+{
+    public string Topic { get; init; } = "";
+    public string ClientId { get; init; } = "";
+    public string Ts { get; init; } = "";
+    public long MsgCount { get; init; }
+    public long Bytes { get; init; }
 }
 
 /// <summary>分钟增量行</summary>

@@ -13,13 +13,16 @@
     return r.json();
   }
 
-  function fmtBytes(n) {
+    function fmtBytes(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
     if (n >= 1e6) return (n / 1e6).toFixed(2) + ' MB';
     if (n >= 1e3) return (n / 1e3).toFixed(1) + ' KB';
     return n + ' B';
   }
   function fmtNum(n) { return Number(n).toLocaleString('en-US'); }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   async function refreshStatus() {
     try {
@@ -169,10 +172,6 @@
       openRow = detail;
     }
 
-    function esc(s) {
-      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-
     query();
     refreshStatus();
     setInterval(refreshStatus, 30000);
@@ -308,6 +307,134 @@
     setInterval(refreshStatus, 30000);
   }
 
+  // ---------------- 主题统计页 ----------------
+
+  if (page === '/topics.html') { initTopics(); }
+
+  function initTopics() {
+    const pad = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    let order = 'msg';
+    let topic = 'FMO/RAW';
+
+    // 默认近 7 天
+    const s7 = new Date(now); s7.setDate(now.getDate() - 7);
+    $('from').value = fmt(s7);
+    $('to').value = fmt(now);
+
+    // 读取主题配置状态
+    (async () => {
+      try {
+        const d = await api('/api/topic-config');
+        topic = d.topic;
+        $('topic-name').textContent = d.topic + ' /#';
+        const st = $('ingest-status');
+        if (d.enabled) {
+          st.className = 'status-ok';
+          st.textContent = `已启用（已接收 ${fmtNum(d.total_ingested)} 条，最近 ${d.last_ingest_at || '-'}）`;
+        } else {
+          st.className = 'status-err';
+          st.textContent = '未启用主题统计（配置页开启）';
+        }
+      } catch (e) { /* 401 */ }
+    })();
+
+    document.querySelectorAll('.filter-bar .chip[data-range]').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.filter-bar .chip[data-range]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const r = b.dataset.range;
+        if (r === 'today') { $('from').value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T00:00`; $('to').value = fmt(now); }
+        else if (r === 'yesterday') { const y = new Date(now); y.setDate(now.getDate() - 1); $('from').value = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}T00:00`; $('to').value = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}T23:59`; }
+        else if (r === '30d') { const s = new Date(now); s.setDate(now.getDate() - 30); $('from').value = fmt(s); $('to').value = fmt(now); }
+        else { const s = new Date(now); s.setDate(now.getDate() - 7); $('from').value = fmt(s); $('to').value = fmt(now); }
+        query();
+      };
+    });
+    document.querySelectorAll('.filter-bar .chip[data-order]').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.filter-bar .chip[data-order]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        order = b.dataset.order;
+        query();
+      };
+    });
+    $('query').onclick = query;
+    $('export').onclick = () => {
+      const f = $('from').value, t = $('to').value;
+      if (!f || !t) return;
+      location.href = `/api/topic-export.csv?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}`;
+    };
+
+    async function query() {
+      const f = $('from').value, t = $('to').value;
+      if (!f || !t) { alert('请选择起止时间'); return; }
+      $('query').disabled = true;
+      try {
+        const d = await api(`/api/topic-leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
+        if (!d.ok) { alert(d.error || '查询失败'); return; }
+        $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
+        $('total-rows').textContent = d.rows.length ? `共 ${d.rows.length} 个呼号` : '';
+        render(d.rows, d.topic);
+      } catch (e) { /* 401 */ }
+      finally { $('query').disabled = false; }
+    }
+
+    function render(rows, tpc) {
+      const tbody = $('rows');
+      tbody.innerHTML = '';
+      $('empty').classList.toggle('hidden', rows.length > 0);
+      rows.forEach((r, i) => {
+        const tr = document.createElement('tr');
+        const rankCls = i === 0 ? 'rank-top1' : i === 1 ? 'rank-top2' : i === 2 ? 'rank-top3' : '';
+        tr.innerHTML = `
+          <td class="num"><span class="${rankCls}">${i + 1}</span></td>
+          <td><a class="name-cell" data-name="${esc(r.name)}">${esc(r.name)}</a></td>
+          <td class="num">${r.deviceCount}</td>
+          <td class="num">${fmtNum(r.totalMsg)}</td>
+          <td class="num">${fmtBytes(r.totalBytes)}</td>`;
+        tr.querySelector('.name-cell').onclick = () => toggleDetail(tr, r.name, tpc);
+        tbody.appendChild(tr);
+      });
+    }
+
+    let openRow = null;
+    async function toggleDetail(tr, name, tpc) {
+      if (openRow && openRow.parentNode === tr.nextSibling) { openRow.remove(); openRow = null; return; }
+      if (openRow) openRow.remove();
+      const f = $('from').value, t = $('to').value;
+      const d = await api(`/api/topic-leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      const detail = document.createElement('tr');
+      detail.className = 'detail-row';
+      detail.innerHTML = `<td colspan="5"><div class="detail-box">
+        <h4>呼号 ${esc(name)} — clientid 明细（${d.rows.length} 行）</h4>
+        <table class="detail-table">
+          <thead><tr><th>clientid</th><th>主题</th><th class="num">消息数</th><th class="num">字节数</th></tr></thead>
+          <tbody></tbody>
+        </table></div></td>`;
+      const tb = detail.querySelector('tbody');
+      const byCid = {};
+      d.rows.forEach(r => {
+        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, msg: 0, bytes: 0, topics: new Set() };
+        const g = byCid[r.clientId];
+        g.msg += r.msgCount; g.bytes += r.bytes; g.topics.add(r.topic);
+      });
+      Object.values(byCid).sort((a, b) => b.msg - a.msg).forEach(g => {
+        const tr2 = document.createElement('tr');
+        tr2.innerHTML = `<td class="mono">${esc(g.cid)}</td><td class="mono">${esc([...g.topics].join(', '))}</td>
+          <td class="num">${fmtNum(g.msg)}</td><td class="num">${fmtBytes(g.bytes)}</td>`;
+        tb.appendChild(tr2);
+      });
+      tr.after(detail);
+      openRow = detail;
+    }
+
+    query();
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
+  }
+
   // ---------------- 配置页 ----------------
 
   if (page === '/settings.html') { initSettings(); }
@@ -355,6 +482,57 @@
       const d = await api('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) });
       if (d.ok) { msg.className = 'form-msg ok'; msg.textContent = '密码已修改'; $('old-pw').value = ''; $('new-pw').value = ''; }
       else msg.textContent = d.error || '修改失败';
+    };
+
+    // ---- 主题统计 ----
+    (async () => {
+      try {
+        const d = await api('/api/topic-config');
+        $('topic-name').value = d.topic;
+        $('topic-webhook-url').value = d.webhook_url || d.ingest_url;
+        $('topic-webhook').textContent = d.webhook_url || d.ingest_url;
+        if (d.enabled) {
+          $('topic-status').textContent = '已启用';
+          $('topic-status').style.color = '#2e7d32';
+          $('topic-total').textContent = fmtNum(d.total_ingested);
+          $('topic-last').textContent = d.last_ingest_at || '-';
+        } else {
+          $('topic-status').textContent = '未启用';
+          $('topic-status').style.color = '#999';
+        }
+      } catch (e) { /* 401 */ }
+    })();
+
+    $('topic-enable').onclick = async () => {
+      const topic = $('topic-name').value.trim() || 'FMO/RAW';
+      const webhookUrl = $('topic-webhook-url').value.trim();
+      const msg = $('topic-msg');
+      msg.className = 'form-msg err';
+      msg.textContent = '正在配置 EMQX 规则引擎…';
+      $('topic-enable').disabled = true;
+      try {
+        const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
+        if (d.ok) {
+          msg.className = 'form-msg ok';
+          msg.textContent = `已启用，统计主题 ${d.topic} /#（1 分钟后出数据）`;
+          $('topic-status').textContent = '已启用';
+          $('topic-status').style.color = '#2e7d32';
+          $('topic-webhook').textContent = d.webhook_url;
+          $('topic-webhook-url').value = d.webhook_url;
+        } else msg.textContent = d.error || '启用失败';
+      } finally { $('topic-enable').disabled = false; }
+    };
+
+    $('topic-disable').onclick = async () => {
+      const msg = $('topic-msg');
+      msg.className = 'form-msg err';
+      const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) });
+      if (d.ok) {
+        msg.className = 'form-msg ok';
+        msg.textContent = '已停用，规则引擎已从 EMQX 移除';
+        $('topic-status').textContent = '未启用';
+        $('topic-status').style.color = '#999';
+      } else msg.textContent = d.error || '停用失败';
     };
   }
 })();
