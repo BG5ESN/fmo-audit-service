@@ -1,0 +1,182 @@
+/* EMQX 监控面板 — Metro 白底灰框直角扁平风格 */
+* { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+}
+
+.hidden { display: none !important; }
+
+/* ---- 配置栏 ---- */
+.config-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #ccc;
+  background: #fff;
+  flex-wrap: wrap;
+}
+.config-title { font-size: 16px; font-weight: 600; color: #000; white-space: nowrap; }
+.config-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
+.cfg-input {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  font-size: 13px;
+  min-width: 220px;
+  background: #fff;
+  color: #333;
+}
+.cfg-input:focus { outline: 1px solid #666; }
+.cfg-status { font-size: 12px; color: #999; }
+
+/* ---- 按钮 ---- */
+.btn {
+  border: 1px solid #333;
+  background: #fff;
+  color: #333;
+  padding: 6px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover { background: #f5f5f5; }
+.btn:active { background: #e0e0e0; }
+.btn-small { padding: 3px 10px; font-size: 12px; }
+.btn-primary { background: #333; color: #fff; }
+.btn-primary:hover { background: #555; }
+
+/* ---- 统计条 ---- */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #ccc;
+  background: #fafafa;
+  font-size: 12px;
+  color: #666;
+}
+.stat-item { white-space: nowrap; }
+.stat-spacer { flex: 1; }
+.search-input {
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  font-size: 12px;
+  width: 160px;
+}
+.search-input:focus { outline: 1px solid #666; }
+
+/* ---- 表格 ---- */
+.table-wrap { padding: 0 16px 24px; overflow-x: auto; }
+#user-table { width: 100%; border-collapse: collapse; margin-top: 12px; min-width: 768px; }
+#user-table th {
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #000;
+  font-size: 12px;
+  white-space: nowrap;
+}
+#user-table td {
+  border: 1px solid #e5e5e5;
+  padding: 7px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+#user-table tbody tr:hover { background: #fafafa; }
+
+.col-name { min-width: 100px; }
+.col-status { width: 60px; }
+.col-num { width: 90px; text-align: right; }
+.col-time { width: 150px; }
+.col-action { width: 70px; }
+
+/* 呼号列：可点击 */
+.user-name { cursor: pointer; font-weight: 600; color: #1565c0; }
+.user-name:hover { text-decoration: underline; }
+
+/* ---- 状态样式 ---- */
+.status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+.status-online .status-dot { background: #2e7d32; }
+.status-offline .status-dot { background: #bbb; }
+
+/* ---- 异常高亮（文档 341-345 行）---- */
+tr.row-rate-anomaly { background: #fff8e1; }
+tr.row-rate-anomaly .num { color: #d32f2f; font-weight: 700; }
+tr.row-flap { background: #ffe0e0; }
+tr.row-flap .user-name { color: #c62828; }
+tr.row-no-data { background: #f5f5f5; }
+tr.row-no-data .num { color: #999; }
+tr.row-offline { background: #fafafa; }
+tr.row-offline .num { color: #999; }
+
+/* 告警标签 */
+.alert-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+}
+.alert-tag.tag-rate { border-color: #d32f2f; color: #d32f2f; }
+.alert-tag.tag-flap { border-color: #c62828; color: #c62828; }
+.alert-tag.tag-no-data { border-color: #999; color: #999; }
+
+/* ---- 空状态 ---- */
+.empty-state {
+  padding: 60px 16px;
+  text-align: center;
+  color: #999;
+  font-size: 14px;
+}
+
+/* ---- 详情弹窗 ---- */
+.modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal-box {
+  background: #fff;
+  border: 1px solid #999;
+  max-width: 900px;
+  width: 92%;
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: none;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #ccc;
+}
+.modal-title { font-size: 15px; font-weight: 600; color: #000; }
+.detail-table { width: 100%; border-collapse: collapse; }
+.detail-table th {
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  padding: 7px 8px;
+  text-align: left;
+  font-size: 12px;
+}
+.detail-table td {
+  border: 1px solid #e5e5e5;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---- 响应式 ---- */
+@media (max-width: 768px) {
+  .config-fields { flex-direction: column; align-items: stretch; }
+  .cfg-input { min-width: 0; }
+  .stats-bar { flex-wrap: wrap; gap: 8px; }
+}

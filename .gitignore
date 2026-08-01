@@ -1,0 +1,14 @@
+# 构建产物
+bin/
+obj/
+publish/
+
+# 运行时数据
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vs/
+.vscode/
+*.user

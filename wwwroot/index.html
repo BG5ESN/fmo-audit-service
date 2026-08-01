@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMQX 客户端监控</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 配置区 -->
+<div id="config-bar" class="config-bar">
+  <div class="config-title">EMQX 客户端监控</div>
+  <div class="config-fields">
+    <input type="text" id="cfg-address" placeholder="EMQX 地址 如 http://192.168.1.100:18083" class="cfg-input">
+    <input type="password" id="cfg-apikey" placeholder="API Key 如 key:secret" class="cfg-input">
+    <button id="cfg-connect" class="btn">连接</button>
+    <button id="cfg-disconnect" class="btn hidden">断开</button>
+    <span id="cfg-status" class="cfg-status"></span>
+  </div>
+</div>
+
+<!-- 统计条 -->
+<div id="stats-bar" class="stats-bar hidden">
+  <span id="stat-time" class="stat-item"></span>
+  <span id="stat-online" class="stat-item"></span>
+  <span id="stat-offline" class="stat-item"></span>
+  <span id="stat-alert" class="stat-item"></span>
+  <span class="stat-spacer"></span>
+  <input type="text" id="search" placeholder="搜索呼号" class="search-input">
+</div>
+
+<!-- 用户表格 -->
+<div id="table-wrap" class="table-wrap hidden">
+<table id="user-table">
+  <thead>
+    <tr>
+      <th class="col-name">呼号</th>
+      <th class="col-status">状态</th>
+      <th class="col-num">收包/s</th>
+      <th class="col-num">发包/s</th>
+      <th class="col-num">收消息</th>
+      <th class="col-num">发消息</th>
+      <th class="col-time">上线时间</th>
+      <th class="col-action">操作</th>
+    </tr>
+  </thead>
+  <tbody id="user-body"></tbody>
+</table>
+</div>
+
+<!-- 空状态 -->
+<div id="empty-state" class="empty-state">
+  未连接。请输入 EMQX 地址和 API Key 后点击连接。
+</div>
+
+<!-- 客户端详情弹窗 -->
+<div id="detail-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="detail-title" class="modal-title"></span>
+      <button id="detail-close" class="btn btn-small">关闭</button>
+    </div>
+    <table class="detail-table">
+      <thead>
+        <tr>
+          <th>ClientID</th>
+          <th>状态</th>
+          <th>IP</th>
+          <th>收包</th>
+          <th>发包</th>
+          <th>收消息</th>
+          <th>发消息</th>
+          <th>连接时间</th>
+        </tr>
+      </thead>
+      <tbody id="detail-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
