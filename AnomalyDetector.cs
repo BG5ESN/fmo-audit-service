@@ -18,6 +18,8 @@ public class AnomalyDetector
 
     /// <summary>速率基线窗口：10 分钟（5s × 120 采样）</summary>
     private const int RateWindowSize = 120;
+    /// <summary>速率平滑窗口：60 秒（EMQX 客户端统计 ~15s 才刷新，5s 差值会失真）</summary>
+    private static readonly TimeSpan RateSmoothWindow = TimeSpan.FromSeconds(60);
 
     private readonly Dictionary<string, UserState> _users = new();
 
@@ -37,6 +39,7 @@ public class AnomalyDetector
         public bool RateAnomalyActive;   // 去抖：触发后保持，直到速率回落到基线 2 倍以下
         public double LastBaseline;
         public DateTime LastUpdateAt = DateTime.MinValue;  // 实际轮询时间（算真实间隔）
+        public Queue<(DateTime t, long rp, long sp)> RateWindow = new();  // 60s 平滑窗口
     }
 
     /// <summary>
@@ -51,24 +54,30 @@ public class AnomalyDetector
             _users[username] = st;
         }
 
-        // ---- 速率（前后快照差值 / 实际间隔秒数）----
-        if (st.LastRecvPkt >= 0)
+        // ---- 速率（60s 滑动窗口平均：EMQX 统计 ~15s 才刷新，短窗差值会失真）----
+        st.RateWindow.Enqueue((now, recvPkt, sendPkt));
+        while (st.RateWindow.Count > 0 && now - st.RateWindow.Peek().t > RateSmoothWindow)
+            st.RateWindow.Dequeue();
+
+        if (st.RateWindow.Count >= 2)
         {
-            // 用实际轮询间隔而非固定 5s：EMQX 调用偶发变慢时，间隔会拉长，
-            // 固定 dt 会把速率高估（如 15s 增量 ÷ 5 = 3 倍假速率）
-            var dt = st.LastUpdateAt == DateTime.MinValue
-                ? 5.0
-                : Math.Clamp((now - st.LastUpdateAt).TotalSeconds, 1.0, 60.0);
-            var rp = Math.Max(0, recvPkt - st.LastRecvPkt) / dt;
-            var sp = Math.Max(0, sendPkt - st.LastSendPkt) / dt;
-            Push(st.RecvRates, rp, RateWindowSize);
-            Push(st.SendRates, sp, RateWindowSize);
-            st.LastRecvRate = rp;
-            st.LastSendRate = sp;
+            var first = st.RateWindow.Peek();
+            var last = st.RateWindow.Last();
+            var spanSec = Math.Max(1.0, (last.t - first.t).TotalSeconds);
+            st.LastRecvRate = Math.Max(0, last.rp - first.rp) / spanSec;
+            st.LastSendRate = Math.Max(0, last.sp - first.sp) / spanSec;
+        }
+        else
+        {
+            st.LastRecvRate = 0;
+            st.LastSendRate = 0;
         }
         st.LastRecvPkt = recvPkt;
         st.LastSendPkt = sendPkt;
         st.LastUpdateAt = now;
+        // 基线队列存平滑速率（60s 窗口平均）
+        Push(st.RecvRates, st.LastRecvRate, RateWindowSize);
+        Push(st.SendRates, st.LastSendRate, RateWindowSize);
 
         // ---- 断连记录：0→1 翻转计一次重连 ----
         if (!st.PrevConnected && connected)
