@@ -2,6 +2,7 @@
 bin/
 obj/
 publish/
+dist/
 
 # 运行时数据
 *.db
