@@ -188,6 +188,12 @@
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
+    // 排行榜自动刷新（30 秒；勾选"自动刷新"才刷，页面隐藏时不刷）
+    setInterval(() => {
+      if (document.hidden) return;
+      if (!$('auto-refresh') || !$('auto-refresh').checked) return;
+      query();
+    }, 30000);
   }
 
   // ---------------- 健康页 ----------------

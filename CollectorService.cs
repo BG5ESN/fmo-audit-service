@@ -40,6 +40,21 @@ public class CollectorService : BackgroundService
     public int LastClientCount { get; private set; }
     public string? LastStatus { get; private set; }
 
+    /// <summary>重置采集器内存状态（完全重置时调用）：清空计数器基线，新周期从零开始</summary>
+    public void ResetState()
+    {
+        lock (_lock)
+        {
+            _prev.Clear();
+        }
+        _lastMsgTotal = null;
+        LastCollectAt = null;
+        LastCollectOk = false;
+        LastError = null;
+        LastClientCount = 0;
+        LastStatus = null;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));

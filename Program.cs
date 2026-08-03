@@ -477,7 +477,10 @@ app.MapPost("/api/admin/reset", async () =>
     // 2) 停止采集并清空内存凭据（configured 状态必须归零，引导才能正确触发）
     collector.IsConfigured = false;
     emqx.ClearCredentials();
-    // 3) 清空全部表
+    // 3) 清空采集器/接收器内存状态（计数器基线、聚合缓冲、计数归零）
+    collector.ResetState();
+    topicIngest.Reset();
+    // 4) 清空全部表
     db.ClearAll();
     return Results.Json(new { ok = true });
 });

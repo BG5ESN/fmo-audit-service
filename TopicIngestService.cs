@@ -25,6 +25,17 @@ public class TopicIngestService : BackgroundService
     public long TotalIngested { get; private set; }
     public DateTime LastIngestAt { get; private set; }
 
+    /// <summary>重置内存状态（完全重置时调用）：清空聚合缓冲与计数</summary>
+    public void Reset()
+    {
+        lock (_lock)
+        {
+            _agg.Clear();
+            TotalIngested = 0;
+            LastIngestAt = default;
+        }
+    }
+
     /// <summary>内部 token（持久化在 settings，首次生成）</summary>
     public string GetToken(Database db)
     {
