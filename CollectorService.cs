@@ -104,7 +104,8 @@ public class CollectorService : BackgroundService
                         rows.Add(new MinuteStatRow
                         {
                             ClientId = key,
-                            Username = c.Username,
+                            // 呼号优先 client_attrs.callsign（认证时服务端写入，比 username 可靠）
+                            Username = c.Callsign ?? c.Username,
                             Ts = ts,
                             SendOct = Delta(prev.SendOct, c.SendOct, out _),
                             RecvOct = Delta(prev.RecvOct, c.RecvOct, out _),

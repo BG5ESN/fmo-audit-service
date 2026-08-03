@@ -306,6 +306,12 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
         var topic = root.TryGetProperty("topic", out var t) ? t.GetString() : null;
         var username = root.TryGetProperty("username", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
         if (username == "undefined") username = null;   // EMQX 无用户名客户端的 Erlang undefined atom 序列化
+        // 呼号优先 client_attrs.callsign（认证时服务端写入的属性，比 username 可靠）
+        string? callsign = null;
+        if (root.TryGetProperty("client_attrs", out var ca) && ca.ValueKind == JsonValueKind.Object
+            && ca.TryGetProperty("callsign", out var cs) && cs.ValueKind == JsonValueKind.String)
+            callsign = cs.GetString();
+        if (!string.IsNullOrEmpty(callsign)) username = callsign;
         var clientid = root.TryGetProperty("clientid", out var c) ? c.GetString() : null;
         long bytes = 0;
         if (root.TryGetProperty("payload", out var p) && p.ValueKind == JsonValueKind.String)

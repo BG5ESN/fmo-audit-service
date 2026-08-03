@@ -578,10 +578,10 @@ public class EmqxClient
     private static bool IsNotFound(string? err)
         => err != null && !err.Contains("404") && !err.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题）</summary>
+    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题；client_attrs 用于 6.x 自动带出 callsign）</summary>
     private async Task<string?> UpsertTopicRuleAsync(string topic, string actionRef)
     {
-        var ruleSql = $"SELECT clientid, username, topic, payload, qos, timestamp FROM \"{topic}/#\"";
+        var ruleSql = $"SELECT clientid, username, topic, payload, qos, timestamp, client_attrs FROM \"{topic}/#\"";
         var ruleBody = JsonSerializer.Serialize(new
         {
             name = TopicRuleName,
@@ -759,4 +759,11 @@ public class EmqxClientInfo
     [JsonPropertyName("node")] public string? Node { get; set; }
     [JsonPropertyName("proto_ver")] public int ProtoVer { get; set; }
     [JsonPropertyName("clean_start")] public bool CleanStart { get; set; }
+    /// <summary>客户端属性（认证时服务端写入）：callsign=呼号, uid=用户编号。呼号追踪优先于此字段</summary>
+    [JsonPropertyName("client_attrs")]
+    public Dictionary<string, string>? ClientAttrs { get; set; }
+
+    /// <summary>呼号（client_attrs.callsign，可能为 null）</summary>
+    public string? Callsign
+        => ClientAttrs is { } attrs && attrs.TryGetValue("callsign", out var c) ? c : null;
 }
