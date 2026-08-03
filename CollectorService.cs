@@ -106,6 +106,7 @@ public class CollectorService : BackgroundService
                             ClientId = key,
                             // 呼号优先 client_attrs.callsign（认证时服务端写入，比 username 可靠）
                             Username = c.Callsign ?? c.Username,
+                            Uid = c.Uid,
                             Ts = ts,
                             SendOct = Delta(prev.SendOct, c.SendOct, out _),
                             RecvOct = Delta(prev.RecvOct, c.RecvOct, out _),

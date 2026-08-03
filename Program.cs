@@ -307,10 +307,14 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
         var username = root.TryGetProperty("username", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
         if (username == "undefined") username = null;   // EMQX 无用户名客户端的 Erlang undefined atom 序列化
         // 呼号优先 client_attrs.callsign（认证时服务端写入的属性，比 username 可靠）
-        string? callsign = null;
-        if (root.TryGetProperty("client_attrs", out var ca) && ca.ValueKind == JsonValueKind.Object
-            && ca.TryGetProperty("callsign", out var cs) && cs.ValueKind == JsonValueKind.String)
-            callsign = cs.GetString();
+        string? callsign = null, uid = null;
+        if (root.TryGetProperty("client_attrs", out var ca) && ca.ValueKind == JsonValueKind.Object)
+        {
+            if (ca.TryGetProperty("callsign", out var cs) && cs.ValueKind == JsonValueKind.String)
+                callsign = cs.GetString();
+            if (ca.TryGetProperty("uid", out var cu) && cu.ValueKind == JsonValueKind.String)
+                uid = cu.GetString();
+        }
         if (!string.IsNullOrEmpty(callsign)) username = callsign;
         var clientid = root.TryGetProperty("clientid", out var c) ? c.GetString() : null;
         long bytes = 0;
@@ -321,7 +325,7 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
             catch { bytes = s.Length; }   // 非 base64 则按字符数近似
         }
         if (!string.IsNullOrEmpty(topic) && !string.IsNullOrEmpty(clientid))
-            ingest.Ingest(topic, username, clientid, bytes, DateTime.Now);
+            ingest.Ingest(topic, username, uid, clientid, bytes, DateTime.Now);
     }
     catch (Exception ex)
     {

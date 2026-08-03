@@ -766,4 +766,8 @@ public class EmqxClientInfo
     /// <summary>呼号（client_attrs.callsign，可能为 null）</summary>
     public string? Callsign
         => ClientAttrs is { } attrs && attrs.TryGetValue("callsign", out var c) ? c : null;
+
+    /// <summary>用户编号（client_attrs.uid，可能为 null）</summary>
+    public string? Uid
+        => ClientAttrs is { } attrs && attrs.TryGetValue("uid", out var u) ? u : null;
 }

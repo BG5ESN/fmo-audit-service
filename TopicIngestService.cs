@@ -13,7 +13,7 @@ public class TopicIngestService : BackgroundService
 {
     private readonly Database _db;
     private readonly object _lock = new();
-    private readonly Dictionary<(string Topic, string? User, string Cid, string Ts), (long Msg, long Bytes)> _agg = new();
+    private readonly Dictionary<(string Topic, string? User, string? Uid, string Cid, string Ts), (long Msg, long Bytes)> _agg = new();
 
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(10));
 
@@ -49,7 +49,7 @@ public class TopicIngestService : BackgroundService
     }
 
     /// <summary>接收一条消息事件（webhook 调用），返回是否接受</summary>
-    public bool Ingest(string topic, string? username, string clientId, long bytes, DateTime now)
+    public bool Ingest(string topic, string? username, string? uid, string clientId, long bytes, DateTime now)
     {
         if (string.IsNullOrEmpty(topic) || string.IsNullOrEmpty(clientId) || bytes < 0) return false;
         // 10 秒颗粒度取整（yyyy-MM-dd HH:mm:SS，秒 = 0/10/20/30/40/50）
@@ -58,7 +58,7 @@ public class TopicIngestService : BackgroundService
             .ToString("yyyy-MM-dd HH:mm:ss");
         lock (_lock)
         {
-            var key = (topic, username, clientId, ts);
+            var key = (topic, username, uid, clientId, ts);
             _agg.TryGetValue(key, out var cur);
             _agg[key] = (cur.Msg + 1, cur.Bytes + bytes);
             TotalIngested++;
@@ -78,6 +78,7 @@ public class TopicIngestService : BackgroundService
             {
                 Topic = kv.Key.Topic,
                 Username = kv.Key.User,
+                Uid = kv.Key.Uid,
                 ClientId = kv.Key.Cid,
                 Ts = kv.Key.Ts,
                 MsgCount = kv.Value.Msg,

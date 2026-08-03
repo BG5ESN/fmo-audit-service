@@ -32,6 +32,7 @@ public class Database
             CREATE TABLE IF NOT EXISTS minute_stats (
                 clientid    TEXT    NOT NULL,
                 username    TEXT,
+                uid         TEXT,               -- 用户编号(client_attrs.uid)
                 ts          TEXT    NOT NULL,   -- 'yyyy-MM-dd HH:mm:00' 分钟级
                 send_oct    INTEGER NOT NULL DEFAULT 0,
                 recv_oct    INTEGER NOT NULL DEFAULT 0,
@@ -49,8 +50,9 @@ public class Database
             CREATE TABLE IF NOT EXISTS topic_stats (
                 topic     TEXT    NOT NULL,
                 username  TEXT,
+                uid       TEXT,               -- 用户编号(client_attrs.uid)
                 clientid  TEXT    NOT NULL,
-                ts        TEXT    NOT NULL,   -- 'yyyy-MM-dd HH:mm:00' 分钟级
+                ts        TEXT    NOT NULL,   -- 'yyyy-MM-dd HH:mm:SS' 10秒粒度
                 msg_count INTEGER NOT NULL DEFAULT 0,
                 bytes     INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (topic, clientid, ts)
@@ -180,15 +182,16 @@ public class Database
             cmd.Transaction = tx;
             cmd.CommandText = """
                 INSERT OR REPLACE INTO minute_stats
-                    (clientid, username, ts, send_oct, recv_oct, send_msg, recv_msg,
+                    (clientid, username, uid, ts, send_oct, recv_oct, send_msg, recv_msg,
                      send_pkt, recv_pkt, ip_address, reconnect)
                 VALUES
-                    ($cid, $user, $ts, $so, $ro, $sm, $rm, $sp, $rp, $ip, $rc)
+                    ($cid, $user, $uid, $ts, $so, $ro, $sm, $rm, $sp, $rp, $ip, $rc)
                 """;
             var p = new Dictionary<string, SqliteParameter>
             {
                 ["$cid"] = cmd.Parameters.Add("$cid", SqliteType.Text),
                 ["$user"] = cmd.Parameters.Add("$user", SqliteType.Text),
+                ["$uid"] = cmd.Parameters.Add("$uid", SqliteType.Text),
                 ["$ts"] = cmd.Parameters.Add("$ts", SqliteType.Text),
                 ["$so"] = cmd.Parameters.Add("$so", SqliteType.Integer),
                 ["$ro"] = cmd.Parameters.Add("$ro", SqliteType.Integer),
@@ -203,6 +206,7 @@ public class Database
             {
                 p["$cid"].Value = r.ClientId;
                 p["$user"].Value = (object?)r.Username ?? DBNull.Value;
+                p["$uid"].Value = (object?)r.Uid ?? DBNull.Value;
                 p["$ts"].Value = r.Ts;
                 p["$so"].Value = r.SendOct;
                 p["$ro"].Value = r.RecvOct;
@@ -268,6 +272,7 @@ public class Database
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
                 SELECT COALESCE(username, clientid) AS name,
+                       MIN(uid)              AS uid,
                        SUM(send_oct + recv_oct) AS total_oct,
                        SUM(send_msg + recv_msg) AS total_msg,
                        SUM(send_pkt + recv_pkt) AS total_pkt,
@@ -289,11 +294,12 @@ public class Database
                 list.Add(new LeaderboardRow
                 {
                     Name = r.GetString(0),
-                    TotalOct = r.IsDBNull(1) ? 0 : r.GetInt64(1),
-                    TotalMsg = r.IsDBNull(2) ? 0 : r.GetInt64(2),
-                    TotalPkt = r.IsDBNull(3) ? 0 : r.GetInt64(3),
-                    DeviceCount = r.IsDBNull(4) ? 0 : r.GetInt64(4),
-                    ReconnectCount = r.IsDBNull(5) ? 0 : r.GetInt64(5),
+                    Uid = r.IsDBNull(1) ? null : r.GetString(1),
+                    TotalOct = r.IsDBNull(2) ? 0 : r.GetInt64(2),
+                    TotalMsg = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                    TotalPkt = r.IsDBNull(4) ? 0 : r.GetInt64(4),
+                    DeviceCount = r.IsDBNull(5) ? 0 : r.GetInt64(5),
+                    ReconnectCount = r.IsDBNull(6) ? 0 : r.GetInt64(6),
                 });
             }
             return list;
@@ -308,7 +314,7 @@ public class Database
             using var conn = Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT clientid, ts,
+                SELECT clientid, uid, ts,
                        send_oct, recv_oct, send_msg, recv_msg, send_pkt, recv_pkt,
                        ip_address, reconnect
                 FROM minute_stats
@@ -326,15 +332,16 @@ public class Database
                 list.Add(new ClientDetailRow
                 {
                     ClientId = r.GetString(0),
-                    Ts = r.GetString(1),
-                    SendOct = r.GetInt64(2),
-                    RecvOct = r.GetInt64(3),
-                    SendMsg = r.GetInt64(4),
-                    RecvMsg = r.GetInt64(5),
-                    SendPkt = r.GetInt64(6),
-                    RecvPkt = r.GetInt64(7),
-                    IpAddress = r.IsDBNull(8) ? null : r.GetString(8),
-                    Reconnect = r.GetInt64(9) != 0,
+                    Uid = r.IsDBNull(1) ? null : r.GetString(1),
+                    Ts = r.GetString(2),
+                    SendOct = r.GetInt64(3),
+                    RecvOct = r.GetInt64(4),
+                    SendMsg = r.GetInt64(5),
+                    RecvMsg = r.GetInt64(6),
+                    SendPkt = r.GetInt64(7),
+                    RecvPkt = r.GetInt64(8),
+                    IpAddress = r.IsDBNull(9) ? null : r.GetString(9),
+                    Reconnect = r.GetInt64(10) != 0,
                 });
             }
             return list;
@@ -410,8 +417,8 @@ public class Database
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = """
-                INSERT INTO topic_stats (topic, username, clientid, ts, msg_count, bytes)
-                VALUES ($topic, $user, $cid, $ts, $msg, $bytes)
+                INSERT INTO topic_stats (topic, username, uid, clientid, ts, msg_count, bytes)
+                VALUES ($topic, $user, $uid, $cid, $ts, $msg, $bytes)
                 ON CONFLICT(topic, clientid, ts) DO UPDATE SET
                     msg_count = msg_count + excluded.msg_count,
                     bytes = bytes + excluded.bytes
@@ -420,6 +427,7 @@ public class Database
             {
                 ["$topic"] = cmd.Parameters.Add("$topic", SqliteType.Text),
                 ["$user"] = cmd.Parameters.Add("$user", SqliteType.Text),
+                ["$uid"] = cmd.Parameters.Add("$uid", SqliteType.Text),
                 ["$cid"] = cmd.Parameters.Add("$cid", SqliteType.Text),
                 ["$ts"] = cmd.Parameters.Add("$ts", SqliteType.Text),
                 ["$msg"] = cmd.Parameters.Add("$msg", SqliteType.Integer),
@@ -429,6 +437,7 @@ public class Database
             {
                 p["$topic"].Value = r.Topic;
                 p["$user"].Value = (object?)r.Username ?? DBNull.Value;
+                p["$uid"].Value = (object?)r.Uid ?? DBNull.Value;
                 p["$cid"].Value = r.ClientId;
                 p["$ts"].Value = r.Ts;
                 p["$msg"].Value = r.MsgCount;
@@ -449,6 +458,7 @@ public class Database
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
                 SELECT COALESCE(username, clientid) AS name,
+                       MIN(uid)          AS uid,
                        SUM(msg_count) AS total_msg,
                        SUM(bytes)     AS total_bytes,
                        COUNT(DISTINCT clientid) AS device_count
@@ -470,9 +480,10 @@ public class Database
                 list.Add(new TopicLeaderboardRow
                 {
                     Name = r.GetString(0),
-                    TotalMsg = r.IsDBNull(1) ? 0 : r.GetInt64(1),
-                    TotalBytes = r.IsDBNull(2) ? 0 : r.GetInt64(2),
-                    DeviceCount = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                    Uid = r.IsDBNull(1) ? null : r.GetString(1),
+                    TotalMsg = r.IsDBNull(2) ? 0 : r.GetInt64(2),
+                    TotalBytes = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                    DeviceCount = r.IsDBNull(4) ? 0 : r.GetInt64(4),
                 });
             }
             return list;
@@ -487,7 +498,7 @@ public class Database
             using var conn = Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT topic, clientid, ts, msg_count, bytes
+                SELECT topic, clientid, uid, ts, msg_count, bytes
                 FROM topic_stats
                 WHERE ts BETWEEN $from AND $to
                   AND (topic = $topic OR topic LIKE $topic || '/%')
@@ -506,9 +517,10 @@ public class Database
                 {
                     Topic = r.GetString(0),
                     ClientId = r.GetString(1),
-                    Ts = r.GetString(2),
-                    MsgCount = r.GetInt64(3),
-                    Bytes = r.GetInt64(4),
+                    Uid = r.IsDBNull(2) ? null : r.GetString(2),
+                    Ts = r.GetString(3),
+                    MsgCount = r.GetInt64(4),
+                    Bytes = r.GetInt64(5),
                 });
             }
             return list;
@@ -562,6 +574,7 @@ public class Database
                     SELECT * FROM (
                         SELECT {bucketExpr} AS bucket_ts,
                                COALESCE(username, clientid) AS name,
+                               MAX(uid) AS uid,
                                SUM(msg_count) AS msg,
                                ROW_NUMBER() OVER (
                                    PARTITION BY {bucketExpr}
@@ -583,7 +596,7 @@ public class Database
                     var ts = r.GetString(0);
                     if (!topUsers.TryGetValue(ts, out var list))
                         topUsers[ts] = list = new List<TopicUserStat>();
-                    list.Add(new TopicUserStat { Name = r.GetString(1), Msg = r.GetInt64(2) });
+                    list.Add(new TopicUserStat { Name = r.GetString(1), Uid = r.IsDBNull(2) ? null : r.GetString(2), Msg = r.GetInt64(3) });
                 }
             }
 
@@ -715,6 +728,7 @@ public class TopicTimelineRow
 public class TopicUserStat
 {
     public string Name { get; init; } = "";
+    public string? Uid { get; init; }
     public long Msg { get; init; }
 }
 
@@ -723,6 +737,7 @@ public class TopicStatRow
 {
     public required string Topic { get; init; }
     public string? Username { get; init; }
+    public string? Uid { get; init; }
     public required string ClientId { get; init; }
     public required string Ts { get; init; }
     public long MsgCount { get; init; }
@@ -733,6 +748,7 @@ public class TopicStatRow
 public class TopicLeaderboardRow
 {
     public string Name { get; init; } = "";
+    public string? Uid { get; init; }
     public long TotalMsg { get; init; }
     public long TotalBytes { get; init; }
     public long DeviceCount { get; init; }
@@ -743,6 +759,7 @@ public class TopicDetailRow
 {
     public string Topic { get; init; } = "";
     public string ClientId { get; init; } = "";
+    public string? Uid { get; init; }
     public string Ts { get; init; } = "";
     public long MsgCount { get; init; }
     public long Bytes { get; init; }
@@ -753,6 +770,7 @@ public class MinuteStatRow
 {
     public required string ClientId { get; init; }
     public string? Username { get; init; }
+    public string? Uid { get; init; }
     public required string Ts { get; init; }          // 'yyyy-MM-dd HH:mm:00'
     public long SendOct { get; init; }
     public long RecvOct { get; init; }
@@ -785,6 +803,7 @@ public class HealthSnapshotRow
 public class LeaderboardRow
 {
     public string Name { get; init; } = "";
+    public string? Uid { get; init; }
     public long TotalOct { get; init; }
     public long TotalMsg { get; init; }
     public long TotalPkt { get; init; }
@@ -796,6 +815,7 @@ public class LeaderboardRow
 public class ClientDetailRow
 {
     public string ClientId { get; init; } = "";
+    public string? Uid { get; init; }
     public string Ts { get; init; } = "";
     public long SendOct { get; init; }
     public long RecvOct { get; init; }

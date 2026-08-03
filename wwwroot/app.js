@@ -23,6 +23,10 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
+  // 用户显示名：呼号（UID），无 uid 时只显示呼号
+  function showName(name, uid) {
+    return uid ? `${esc(name)}（${esc(uid)}）` : esc(name);
+  }
 
   async function refreshStatus() {
     try {
@@ -138,7 +142,7 @@
         const rankCls = i === 0 ? 'rank-top1' : i === 1 ? 'rank-top2' : i === 2 ? 'rank-top3' : '';
         tr.innerHTML = `
           <td class="num"><span class="${rankCls}">${i + 1}</span></td>
-          <td><a class="name-cell" data-name="${esc(r.name)}">${esc(r.name)}</a></td>
+          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}</a></td>
           <td class="num">${r.deviceCount}</td>
           <td class="num">${fmtBytes(r.totalOct)}</td>
           <td class="num">${fmtNum(r.totalMsg)}</td>
@@ -169,13 +173,13 @@
       // 按 clientid 聚合
       const byCid = {};
       d.rows.forEach(r => {
-        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, so: 0, ro: 0, sm: 0, rm: 0, sp: 0, rp: 0, rc: 0, ip: r.ipAddress };
+        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, uid: r.uid, so: 0, ro: 0, sm: 0, rm: 0, sp: 0, rp: 0, rc: 0, ip: r.ipAddress };
         const g = byCid[r.clientId];
         g.so += r.sendOct; g.ro += r.recvOct; g.sm += r.sendMsg; g.rm += r.recvMsg; g.sp += r.sendPkt; g.rp += r.recvPkt; g.rc += r.reconnect ? 1 : 0;
       });
       Object.values(byCid).sort((a, b) => (b.so + b.ro) - (a.so + a.ro)).forEach(g => {
         const tr2 = document.createElement('tr');
-        tr2.innerHTML = `<td class="mono">${esc(g.cid)}</td><td class="num">${fmtBytes(g.so)}</td><td class="num">${fmtBytes(g.ro)}</td>
+        tr2.innerHTML = `<td class="mono">${showName(g.cid, g.uid)}</td><td class="num">${fmtBytes(g.so)}</td><td class="num">${fmtBytes(g.ro)}</td>
           <td class="num">${fmtNum(g.sm)}</td><td class="num">${fmtNum(g.rm)}</td><td class="num">${fmtNum(g.sp)}</td><td class="num">${fmtNum(g.rp)}</td>
           <td>${g.rc > 0 ? '<span class="reconnect-badge">' + g.rc + '</span>' : ''}</td>`;
         tb.appendChild(tr2);
@@ -521,7 +525,7 @@
           let rowsHtml = '';
           if (r.topUsers && r.topUsers.length) {
             rowsHtml = '<div style="border-top:1px solid #ccc;margin-top:6px;padding-top:6px;max-height:150px;overflow-y:auto">' +
-              r.topUsers.map(u => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${esc(u.name)}</span><b>${fmtNum(u.msg)} 包</b></div>`).join('') +
+              r.topUsers.map(u => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${showName(u.name, u.uid)}</span><b>${fmtNum(u.msg)} 包</b></div>`).join('') +
               (r.userCount > r.topUsers.length ? `<div style="color:#999;margin-top:3px">… 共 ${r.userCount} 人发言</div>` : '') +
               '</div>';
           }
@@ -611,7 +615,7 @@
         const rankCls = i === 0 ? 'rank-top1' : i === 1 ? 'rank-top2' : i === 2 ? 'rank-top3' : '';
         tr.innerHTML = `
           <td class="num"><span class="${rankCls}">${i + 1}</span></td>
-          <td><a class="name-cell" data-name="${esc(r.name)}">${esc(r.name)}</a></td>
+          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}</a></td>
           <td class="num">${r.deviceCount}</td>
           <td class="num">${fmtNum(r.totalMsg)}</td>
           <td class="num">${fmtBytes(r.totalBytes)}</td>`;
@@ -637,13 +641,13 @@
       const tb = detail.querySelector('tbody');
       const byCid = {};
       d.rows.forEach(r => {
-        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, msg: 0, bytes: 0, topics: new Set() };
+        if (!byCid[r.clientId]) byCid[r.clientId] = { cid: r.clientId, uid: r.uid, msg: 0, bytes: 0, topics: new Set() };
         const g = byCid[r.clientId];
         g.msg += r.msgCount; g.bytes += r.bytes; g.topics.add(r.topic);
       });
       Object.values(byCid).sort((a, b) => b.msg - a.msg).forEach(g => {
         const tr2 = document.createElement('tr');
-        tr2.innerHTML = `<td class="mono">${esc(g.cid)}</td><td class="mono">${esc([...g.topics].join(', '))}</td>
+        tr2.innerHTML = `<td class="mono">${showName(g.cid, g.uid)}</td><td class="mono">${esc([...g.topics].join(', '))}</td>
           <td class="num">${fmtNum(g.msg)}</td><td class="num">${fmtBytes(g.bytes)}</td>`;
         tb.appendChild(tr2);
       });
