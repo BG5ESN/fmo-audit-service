@@ -45,6 +45,19 @@ bash deploy-linux.sh          # 安装到 /opt/emqx-monitor + systemd 服务
 - **完全重置**：配置页 → 重置审计监控工具（恢复首次安装状态，同时移除 EMQX 规则引擎）
 - **数据备份**：直接复制 db 文件即可（建议每天 cron 备份）
 
+## 开发者：打包发布
+
+```bash
+# Linux / macOS（或 Windows Git Bash）
+bash script/build-release.sh 1.0.0 [tag]
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File script\build-release.ps1 -Version 1.0.0 [-Tag]
+```
+
+产物在 `dist/`：Linux tar.gz + Windows zip + 源码包，各带 .sha256 校验。
+要求：dotnet SDK、git；打包前工作区必须无未提交改动。
+
 ## 注意事项
 
 - 数据按服务器本地时间存储，请确保服务器时区正确（`timedatectl set-timezone Asia/Shanghai`）
