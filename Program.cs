@@ -474,8 +474,9 @@ app.MapPost("/api/admin/reset", async () =>
         if (err != null)
             return Results.Json(new { ok = false, error = $"清理 EMQX 规则引擎失败: {err}（可稍后手动在 EMQX 删除 emqx-monitor-* 资源）" });
     }
-    // 2) 停止采集
+    // 2) 停止采集并清空内存凭据（configured 状态必须归零，引导才能正确触发）
     collector.IsConfigured = false;
+    emqx.ClearCredentials();
     // 3) 清空全部表
     db.ClearAll();
     return Results.Json(new { ok = true });

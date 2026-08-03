@@ -34,7 +34,13 @@ $('submit').onclick = async () => {
   try {
     const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
     const d = await r.json();
-    if (d.ok) location.href = '/';
+    if (d.ok) {
+      // 未完成首次引导（未配置 EMQX）→ 直接进配置页
+      try {
+        const st = await fetch('/api/status').then(x => x.json());
+        location.href = (st.wizard_done || st.configured) ? '/' : '/settings.html';
+      } catch (e) { location.href = '/'; }
+    }
     else msg.textContent = d.error || '登录失败';
   } catch (e) { msg.textContent = '网络错误：' + e.message; }
 };

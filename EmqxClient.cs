@@ -47,6 +47,14 @@ public class EmqxClient
         _apiKey = apiKey;
     }
 
+    /// <summary>清空内存凭据（完全重置时调用，避免 configured 状态残留）</summary>
+    public void ClearCredentials()
+    {
+        _baseUrl = "";
+        _apiKey = "";
+        _version = null;
+    }
+
     /// <summary>配置 EMQX 连接并验证连通性</summary>
     /// <returns>成功返回 null，失败返回错误消息</returns>
     public async Task<string?> ConfigureAsync(string baseUrl, string apiKey)
@@ -479,9 +487,9 @@ public class EmqxClient
         var err = await DeleteTopicRuleAsync();
         if (err != null) return err;
         var adel = await SendAsync(HttpMethod.Delete, $"/api/v5/actions/http:{TopicActionName}", null);
-        if (adel.Error != null && !adel.Error.Contains("404")) return $"删除动作失败: {adel.Error}";
+        if (IsNotFound(adel.Error)) return $"删除动作失败: {adel.Error}";
         var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
-        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
+        if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
         return null;
     }
 
@@ -560,11 +568,15 @@ public class EmqxClient
         var err = await DeleteTopicRuleAsync();
         if (err != null) return err;
         var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null);
-        if (bdel.Error != null && !bdel.Error.Contains("404")) return $"删除桥接失败: {bdel.Error}";
+        if (IsNotFound(bdel.Error)) return $"删除桥接失败: {bdel.Error}";
         var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
-        if (cdel.Error != null && !cdel.Error.Contains("404")) return $"删除连接器失败: {cdel.Error}";
+        if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
         return null;
     }
+
+    /// <summary>删除资源时 404/NOT_FOUND 视为"本来就不存在"，不算失败</summary>
+    private static bool IsNotFound(string? err)
+        => err != null && !err.Contains("404") && !err.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题）</summary>
     private async Task<string?> UpsertTopicRuleAsync(string topic, string actionRef)
