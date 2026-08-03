@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # EMQX 审计监控工具 — 发布打包脚本 (Windows PowerShell, 多平台)
 # 用法: powershell -ExecutionPolicy Bypass -File script\build-release.ps1 [-Version 1.0.0] [-Tag]
 #   平台列表可用 -Platforms 覆盖: -Platforms "linux-x64,win-x64"
@@ -6,6 +6,11 @@
 #           osx-x64(Intel Mac) / osx-arm64(Apple Silicon) / win-x64
 # 产物: dist/（各平台部署包 + 源码包 + .sha256 校验）
 # 需 Windows 10 1803+（自带 tar）；dotnet SDK + git 必需
+#
+# 注意: 本文件必须保持 UTF-8 with BOM 编码!
+# Windows PowerShell 5.1 读取无 BOM 的 UTF-8 会按 ANSI 解析,
+# 中文注释/字符串将乱码并导致语法错误(一元运算符!缺少表达式/字符串缺少终止符)。
+# 用 VS Code 等编辑器保存时选择 'UTF-8 with BOM'。
 # ============================================================
 param(
     [string]$Version = "1.0.0",
