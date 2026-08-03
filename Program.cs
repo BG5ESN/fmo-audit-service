@@ -393,6 +393,8 @@ app.MapGet("/api/topic-timeline", (string from, string to, string? bucket, Datab
     var topic = db.GetSetting("topic_name") ?? "FMO/RAW";
     var b = bucket is "10s" or "5m" or "1h" ? bucket : "1m";
     var rows = database.QueryTopicTimeline(topic, f, t, b);
+    if (rows.Count > 40000)
+        return Results.Json(new { ok = false, error = "时间范围过大（补零后超过 4 万点）。请缩小时间范围或使用更粗的统计周期（如 1 小时）" });
     return Results.Json(new { ok = true, topic, from = f, to = t, bucket = b, rows });
 });
 

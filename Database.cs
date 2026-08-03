@@ -360,27 +360,39 @@ public class Database
                 """;
             cmd.Parameters.AddWithValue("$from", from);
             cmd.Parameters.AddWithValue("$to", to);
-            var list = new List<HealthSnapshotRow>();
-            using var r = cmd.ExecuteReader();
-            while (r.Read())
+            var rows = new List<HealthSnapshotRow>();
+            using (var r = cmd.ExecuteReader())
             {
-                list.Add(new HealthSnapshotRow
+                while (r.Read())
                 {
-                    Ts = r.GetString(0),
-                    HostCpuPct = r.IsDBNull(1) ? null : r.GetDouble(1),
-                    HostMemUsedPct = r.IsDBNull(2) ? null : r.GetDouble(2),
-                    HostDiskUsedPct = r.IsDBNull(3) ? null : r.GetDouble(3),
-                    HostNetRecvKbps = r.IsDBNull(4) ? null : r.GetDouble(4),
-                    HostNetSendKbps = r.IsDBNull(5) ? null : r.GetDouble(5),
-                    EmqxNode = r.IsDBNull(6) ? null : r.GetString(6),
-                    EmqxCpuPct = r.IsDBNull(7) ? null : r.GetDouble(7),
-                    EmqxMemUsedPct = r.IsDBNull(8) ? null : r.GetDouble(8),
-                    EmqxConnections = r.IsDBNull(9) ? null : r.GetInt64(9),
-                    EmqxMsgRate = r.IsDBNull(10) ? null : r.GetDouble(10),
-                    EmqxAlarms = r.IsDBNull(11) ? null : r.GetString(11),
-                });
+                    rows.Add(new HealthSnapshotRow
+                    {
+                        Ts = r.GetString(0),
+                        HostCpuPct = r.IsDBNull(1) ? null : r.GetDouble(1),
+                        HostMemUsedPct = r.IsDBNull(2) ? null : r.GetDouble(2),
+                        HostDiskUsedPct = r.IsDBNull(3) ? null : r.GetDouble(3),
+                        HostNetRecvKbps = r.IsDBNull(4) ? null : r.GetDouble(4),
+                        HostNetSendKbps = r.IsDBNull(5) ? null : r.GetDouble(5),
+                        EmqxNode = r.IsDBNull(6) ? null : r.GetString(6),
+                        EmqxCpuPct = r.IsDBNull(7) ? null : r.GetDouble(7),
+                        EmqxMemUsedPct = r.IsDBNull(8) ? null : r.GetDouble(8),
+                        EmqxConnections = r.IsDBNull(9) ? null : r.GetInt64(9),
+                        EmqxMsgRate = r.IsDBNull(10) ? null : r.GetDouble(10),
+                        EmqxAlarms = r.IsDBNull(11) ? null : r.GetString(11),
+                    });
+                }
             }
-            return list;
+            // 补零：完整分钟序列（断档时段填 null，前端画线断口而非压缩拼接）
+            var fromDt = DateTime.ParseExact(from, "yyyy-MM-dd HH:mm:00", System.Globalization.CultureInfo.InvariantCulture);
+            var toDt = DateTime.ParseExact(to, "yyyy-MM-dd HH:mm:00", System.Globalization.CultureInfo.InvariantCulture);
+            var byTs = rows.ToDictionary(r => r.Ts);
+            var result = new List<HealthSnapshotRow>();
+            for (var t = fromDt; t <= toDt; t = t.AddMinutes(1))
+            {
+                var key = t.ToString("yyyy-MM-dd HH:mm:00");
+                result.Add(byTs.TryGetValue(key, out var row) ? row : new HealthSnapshotRow { Ts = key });
+            }
+            return result;
         }
     }
 
@@ -575,17 +587,40 @@ public class Database
                 }
             }
 
-            var result = new List<TopicTimelineRow>();
-            foreach (var (ts, t) in totals)
+            // 3) 补零：生成完整时间序列（起点对齐桶边界，无数据的桶填 0）
+            //    时间轴必须诚实——空时段显示 0，而不是压缩拼接
+            var fromDt = DateTime.ParseExact(from, "yyyy-MM-dd HH:mm:00", System.Globalization.CultureInfo.InvariantCulture);
+            var toDt = DateTime.ParseExact(to, "yyyy-MM-dd HH:mm:00", System.Globalization.CultureInfo.InvariantCulture);
+            var step = bucket switch
             {
-                result.Add(new TopicTimelineRow
-                {
-                    Ts = ts,
-                    MsgCount = t.Msg,
-                    Bytes = t.Bytes,
-                    UserCount = t.Users,
-                    TopUsers = topUsers.TryGetValue(ts, out var u) ? u : [],
-                });
+                "10s" => TimeSpan.FromSeconds(10),
+                "5m" => TimeSpan.FromMinutes(5),
+                "1h" => TimeSpan.FromHours(1),
+                _ => TimeSpan.FromMinutes(1)
+            };
+            // 起点对齐桶边界（5m 对齐 5 的倍数分钟，1h 对齐整点，10s 对齐 10 秒）
+            DateTime start = bucket switch
+            {
+                "5m" => new DateTime(fromDt.Year, fromDt.Month, fromDt.Day, fromDt.Hour, fromDt.Minute / 5 * 5, 0),
+                "1h" => new DateTime(fromDt.Year, fromDt.Month, fromDt.Day, fromDt.Hour, 0, 0),
+                "10s" => new DateTime(fromDt.Year, fromDt.Month, fromDt.Day, fromDt.Hour, fromDt.Minute, fromDt.Second / 10 * 10),
+                _ => fromDt
+            };
+            var tsFormat = bucket == "10s" ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:00";
+            var result = new List<TopicTimelineRow>();
+            for (var t = start; t <= toDt; t = t.Add(step))
+            {
+                var key = t.ToString(tsFormat);
+                result.Add(totals.TryGetValue(key, out var tv)
+                    ? new TopicTimelineRow
+                    {
+                        Ts = key,
+                        MsgCount = tv.Msg,
+                        Bytes = tv.Bytes,
+                        UserCount = tv.Users,
+                        TopUsers = topUsers.TryGetValue(key, out var u) ? u : [],
+                    }
+                    : new TopicTimelineRow { Ts = key, MsgCount = 0, Bytes = 0, UserCount = 0, TopUsers = [] });
             }
             return result;
         }
