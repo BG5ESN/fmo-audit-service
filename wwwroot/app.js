@@ -649,9 +649,10 @@
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
-    // 时间轴自动刷新（30 秒；页面隐藏时不刷，保持缩放/平移窗口）
+    // 时间轴自动刷新（30 秒；勾选"自动刷新"才刷，页面隐藏时不刷，保持缩放/平移窗口）
     setInterval(() => {
       if (document.hidden) return;
+      if (!$('auto-refresh') || !$('auto-refresh').checked) return;
       loadTimeline(true);
       api('/api/topic-config').then(d => {
         if (d && d.enabled) {
