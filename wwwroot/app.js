@@ -331,6 +331,7 @@
     let order = 'msg';
     let bucket = '5m';
     let topic = 'FMO/RAW';
+    let viewState = null;   // 时间轴缩放/平移视图状态（自动刷新时保持用户正在看的窗口）
 
     // 默认近 7 天
     const s7 = new Date(now); s7.setDate(now.getDate() - 7);
@@ -404,18 +405,19 @@
       finally { $('query').disabled = false; }
     }
 
-    // ---- 时间轴：全员总量按时间桶（1m/5m/1h）----
-    async function loadTimeline() {
+    // ---- 时间轴：全员总量按时间桶（10s/1m/5m/1h）----
+    // auto=true 为自动刷新：保持当前缩放/平移窗口，只更新数据
+    async function loadTimeline(auto) {
       const f = $('from').value, t = $('to').value;
       if (!f || !t) return;
       try {
         const d = await api(`/api/topic-timeline?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&bucket=${bucket}`);
         if (!d.ok) return;
-        drawTimeline(d.rows, d.bucket);
+        drawTimeline(d.rows, d.bucket, !!auto);
       } catch (e) { /* 401 */ }
     }
 
-    function drawTimeline(rows, bkt) {
+    function drawTimeline(rows, bkt, keepView) {
       const showSec = bkt === '10s';   // 10秒粒度时 X 轴显示到秒
       const cv = $('timeline-canvas');
       const tip = $('timeline-tooltip');
@@ -429,11 +431,16 @@
       const padL = 52, padR = 12, padT = 10, padB = 24;
       const iw = W - padL - padR, ih = H - padT - padB;
 
-      // 视图状态：可见窗口（数据索引），初始为全量
+      // 视图状态：可见窗口（数据索引）；自动刷新时沿用上次窗口（新数据在末尾追加，旧索引不变）
+      let vs = 0, ve = Math.max(0, n - 1);
+      if (keepView && viewState && n > 0) {
+        vs = Math.max(0, Math.min(viewState.vs, n - 1));
+        ve = Math.max(vs, Math.min(viewState.ve, n - 1));
+      }
       const st = {
         rows, n, ctx, tip, padL, padR, padT, padB, iw, ih, W, H, showSec,
-        vs: 0, ve: Math.max(0, n - 1),   // 可见窗口 [vs, ve]
-        MIN_WIN: 5,                       // 最小可见桶数（防止缩放到不可用）
+        vs, ve,                       // 可见窗口 [vs, ve]
+        MIN_WIN: 5,                   // 最小可见桶数（防止缩放到不可用）
         hover: -1,
       };
 
@@ -542,6 +549,7 @@
         let ns = Math.round(idx - ratio * (nw - 1));
         ns = Math.max(0, Math.min(st.n - nw, ns));
         st.vs = ns; st.ve = ns + nw - 1;
+        viewState = { vs: st.vs, ve: st.ve };   // 同步视图状态（自动刷新时保持）
         st.hover = -1;
         drawAll();
       }, { passive: false });
@@ -562,6 +570,7 @@
             let ns = dragVs - shift;
             ns = Math.max(0, Math.min(st.n - nv, ns));
             st.vs = ns; st.ve = ns + nv - 1;
+            viewState = { vs: st.vs, ve: st.ve };   // 同步视图状态
             st.hover = -1;
             drawAll();
           }
@@ -578,10 +587,13 @@
       // 双击恢复全量视图
       cv.ondblclick = () => {
         st.vs = 0; st.ve = st.n - 1; st.hover = -1;
+        viewState = null;   // 全量视图
         drawAll();
       };
 
       drawAll();
+      // 记录当前视图（供自动刷新沿用；全量时不记录，保持跟随新数据）
+      if (st.vs > 0 || st.ve < st.n - 1) viewState = { vs: st.vs, ve: st.ve };
     }
 
     function render(rows, tpc) {
@@ -637,6 +649,17 @@
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
+    // 时间轴自动刷新（30 秒；页面隐藏时不刷，保持缩放/平移窗口）
+    setInterval(() => {
+      if (document.hidden) return;
+      loadTimeline(true);
+      api('/api/topic-config').then(d => {
+        if (d && d.enabled) {
+          const st = $('ingest-status');
+          st.textContent = `已启用（已接收 ${fmtNum(d.total_ingested)} 条，最近 ${d.last_ingest_at || '-'}）`;
+        }
+      }).catch(() => {});
+    }, 30000);
   }
 
   // ---------------- 配置页 ----------------
