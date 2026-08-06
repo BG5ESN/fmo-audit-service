@@ -891,6 +891,104 @@
     bindBanActions($('rows'));
   }
 
+  // ---------------- 身份审计页 ----------------
+
+  if (page === '/audit.html') { initAudit(); }
+
+  function initAudit() {
+    const pad = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    let verdict = '';
+
+    const s7 = new Date(now); s7.setDate(now.getDate() - 7);
+    $('from').value = fmt(s7);
+    $('to').value = fmt(now);
+
+    // 身份控制开关状态
+    (async () => {
+      try {
+        const d = await api('/api/identity-control');
+        const el = $('ic-status');
+        if (d.enabled) { el.className = 'status-ok'; el.textContent = '身份控制已启用（伪造即自动拉黑）'; }
+        else { el.className = 'status-err'; el.textContent = '身份控制已关闭（仅记录提醒，不自动拉黑）'; }
+      } catch (e) { /* 401 */ }
+    })();
+
+    document.querySelectorAll('.filter-bar .chip[data-range]').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.filter-bar .chip[data-range]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const r = b.dataset.range;
+        if (r === '1h') { const s = new Date(now); s.setHours(now.getHours() - 1); $('from').value = fmt(s); $('to').value = fmt(now); }
+        else if (r === 'today') { $('from').value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T00:00`; $('to').value = fmt(now); }
+        else if (r === '30d') { const s = new Date(now); s.setDate(now.getDate() - 30); $('from').value = fmt(s); $('to').value = fmt(now); }
+        else { const s = new Date(now); s.setDate(now.getDate() - 7); $('from').value = fmt(s); $('to').value = fmt(now); }
+        query();
+      };
+    });
+    document.querySelectorAll('.filter-bar .chip[data-verdict]').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.filter-bar .chip[data-verdict]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        verdict = b.dataset.verdict;
+        query();
+      };
+    });
+    $('query').onclick = query;
+
+    const verdictCls = { KICK: '#c62828', WARN: '#e65100', FAIL: '#999' };
+    const verdictTxt = { KICK: '身份不符', WARN: '未知身份', FAIL: '非法包' };
+
+    async function query() {
+      const f = $('from').value, t = $('to').value;
+      if (!f || !t) { alert('请选择起止时间'); return; }
+      $('query').disabled = true;
+      const started = Date.now();
+      try {
+        const d = await api(`/api/audit-packets?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}${verdict ? `&verdict=${verdict}` : ''}&limit=300`);
+        if (!d.ok) { alert(d.error || '查询失败'); return; }
+        $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
+        const c = d.counts || {};
+        $('total-rows').textContent = `KICK ${c.KICK || 0} · WARN ${c.WARN || 0} · FAIL ${c.FAIL || 0}（显示 ${d.rows.length} 条）`;
+        $('query-time').textContent = `查询耗时 ${Date.now() - started}ms`;
+        render(d.rows);
+      } catch (e) { /* 401 */ }
+      finally { $('query').disabled = false; }
+    }
+
+    function render(rows) {
+      const tbody = $('rows');
+      tbody.innerHTML = '';
+      $('empty').classList.toggle('hidden', rows.length > 0);
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const disp = r.ban ? '已自动拉黑' : (r.verdict === 'KICK' ? '仅记录（身份控制关闭或拉黑失败）' : '-');
+        tr.innerHTML = `
+          <td><span style="color:${verdictCls[r.verdict] || '#333'};font-weight:600">${verdictTxt[r.verdict] || r.verdict}</span></td>
+          <td>${esc(r.ts)}</td>
+          <td>${r.connCallsign ? esc(r.connCallsign) + (r.connUid ? `（${esc(r.connUid)}）` : '') : '<span class="ban-note">匿名</span>'}</td>
+          <td>${r.pktCallsign ? esc(r.pktCallsign) + (r.pktUid ? `（${esc(r.pktUid)}）` : '') : '<span class="ban-note">-</span>'}</td>
+          <td class="mono">${esc(r.clientId)}</td>
+          <td class="num">${r.len ?? '-'}</td>
+          <td class="num">${r.frameNum ?? '-'}</td>
+          <td class="num">${r.smeter ?? '-'}</td>
+          <td class="num">${r.crcOk === null || r.crcOk === undefined ? '-' : (r.crcOk ? '<span style="color:#2e7d32">✓</span>' : '<span style="color:#c62828">✗</span>')}</td>
+          <td>${r.ban ? '<span style="color:#c62828;font-weight:600">' + disp + '</span>' : '<span class="ban-note">' + esc(disp) + '</span>'}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    query();
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
+    setInterval(() => {
+      if (document.hidden) return;
+      if (!$('auto-refresh') || !$('auto-refresh').checked) return;
+      query();
+    }, 30000);
+  }
+
   // ---------------- 黑名单页 ----------------
 
   if (page === '/blacklist.html') { initBlacklist(); }
@@ -960,6 +1058,36 @@
   function initSettings() {
     refreshStatus();
     setInterval(refreshStatus, 30000);
+
+    // ---- 身份控制开关 ----
+    (async () => {
+      try {
+        const d = await api('/api/identity-control');
+        const el = $('ic-status');
+        if (d.enabled) { el.className = 'status-ok'; el.textContent = '已启用（伪造即自动拉黑）'; }
+        else { el.className = 'status-err'; el.textContent = '已关闭（仅记录提醒）'; }
+      } catch (e) { /* 401 */ }
+    })();
+    const setIc = async enabled => {
+      const msg = $('ic-msg');
+      msg.className = 'form-msg';
+      msg.textContent = '保存中…';
+      try {
+        const d = await api('/api/identity-control', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        if (d.ok) {
+          msg.className = 'form-msg ok';
+          msg.textContent = enabled ? '身份控制已启用' : '已关闭（仅记录提醒，不自动拉黑）';
+          const el = $('ic-status');
+          el.className = enabled ? 'status-ok' : 'status-err';
+          el.textContent = enabled ? '已启用（伪造即自动拉黑）' : '已关闭（仅记录提醒）';
+        } else { msg.className = 'form-msg err'; msg.textContent = d.error || '保存失败'; }
+      } catch (e) { /* 401 */ }
+    };
+    $('ic-enable').onclick = () => setIc(true);
+    $('ic-disable').onclick = () => setIc(false);
 
     (async () => {
       try {

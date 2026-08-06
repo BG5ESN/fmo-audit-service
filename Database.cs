@@ -98,6 +98,28 @@ public class Database
                 created_at TEXT    NOT NULL       -- 操作时间 'yyyy-MM-dd HH:mm:ss'
             );
             CREATE INDEX IF NOT EXISTS idx_bl_who ON blacklist_audit(who, created_at);
+
+            CREATE TABLE IF NOT EXISTS audit_packets (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts            TEXT    NOT NULL,   -- 接收时间 'yyyy-MM-dd HH:mm:ss.SSS'
+                topic         TEXT    NOT NULL,
+                clientid      TEXT    NOT NULL,
+                conn_callsign TEXT,               -- 连接身份 callsign（client_attrs.callsign）
+                conn_uid      TEXT,               -- 连接身份 uid
+                pkt_callsign  TEXT,               -- 包头声明呼号
+                pkt_uid       TEXT,               -- 包头声明 UID
+                verdict       TEXT    NOT NULL,   -- KICK / WARN / FAIL（PASS 不落库，由 topic_stats 聚合）
+                len           INTEGER,
+                frame_num     INTEGER,
+                crc_ok        INTEGER,
+                smeter        INTEGER,
+                srv_uid       TEXT,
+                pkt_ts        TEXT,               -- 包内 timestamp 原值（uint32 字符串）
+                stream_begin  TEXT,
+                ban           INTEGER NOT NULL DEFAULT 0   -- 是否触发自动拉黑
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_packets(ts);
+            CREATE INDEX IF NOT EXISTS idx_audit_verdict ON audit_packets(verdict, ts);
             """;
         cmd.ExecuteNonQuery();
 
@@ -749,10 +771,119 @@ public class Database
         }
     }
 
+    // ---------------- 包头审计（身份控制） ----------------
+
+    /// <summary>写入一条包头审计事件（仅异常：KICK/WARN/FAIL；PASS 由 topic_stats 聚合）</summary>
+    public void WriteAuditPacket(AuditPacketRow r)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO audit_packets
+                    (ts, topic, clientid, conn_callsign, conn_uid, pkt_callsign, pkt_uid,
+                     verdict, len, frame_num, crc_ok, smeter, srv_uid, pkt_ts, stream_begin, ban)
+                VALUES
+                    ($ts, $topic, $cid, $cc, $cu, $pc, $pu,
+                     $v, $len, $fn, $crc, $smt, $su, $pts, $sb, $ban)
+                """;
+            cmd.Parameters.AddWithValue("$ts", r.Ts);
+            cmd.Parameters.AddWithValue("$topic", r.Topic);
+            cmd.Parameters.AddWithValue("$cid", r.ClientId);
+            cmd.Parameters.AddWithValue("$cc", (object?)r.ConnCallsign ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$cu", (object?)r.ConnUid ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$pc", (object?)r.PktCallsign ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$pu", (object?)r.PktUid ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$v", r.Verdict);
+            cmd.Parameters.AddWithValue("$len", (object?)r.Len ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$fn", (object?)r.FrameNum ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$crc", (object?)r.CrcOk ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$smt", (object?)r.Smeter ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$su", (object?)r.SrvUid ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$pts", (object?)r.PktTs ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$sb", (object?)r.StreamBegin ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ban", r.Ban ? 1 : 0);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>查询包头审计事件（倒序；verdict 为空 = 全部异常类型）</summary>
+    public List<AuditPacketRow> QueryAuditPackets(string from, string to, string? verdict, int limit = 200)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            var sql = """
+                SELECT ts, topic, clientid, conn_callsign, conn_uid, pkt_callsign, pkt_uid,
+                       verdict, len, frame_num, crc_ok, smeter, srv_uid, pkt_ts, stream_begin, ban
+                FROM audit_packets
+                WHERE ts BETWEEN $from AND $to
+                """;
+            if (!string.IsNullOrEmpty(verdict))
+                sql += " AND verdict = $v";
+            sql += " ORDER BY id DESC LIMIT $n";
+            cmd.CommandText = sql;
+            cmd.Parameters.AddWithValue("$from", from);
+            cmd.Parameters.AddWithValue("$to", to);
+            if (!string.IsNullOrEmpty(verdict))
+                cmd.Parameters.AddWithValue("$v", verdict);
+            cmd.Parameters.AddWithValue("$n", limit);
+            var list = new List<AuditPacketRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new AuditPacketRow
+                {
+                    Ts = r.GetString(0),
+                    Topic = r.GetString(1),
+                    ClientId = r.GetString(2),
+                    ConnCallsign = r.IsDBNull(3) ? null : r.GetString(3),
+                    ConnUid = r.IsDBNull(4) ? null : r.GetString(4),
+                    PktCallsign = r.IsDBNull(5) ? null : r.GetString(5),
+                    PktUid = r.IsDBNull(6) ? null : r.GetString(6),
+                    Verdict = r.GetString(7),
+                    Len = r.IsDBNull(8) ? null : r.GetInt64(8),
+                    FrameNum = r.IsDBNull(9) ? null : r.GetInt64(9),
+                    CrcOk = r.IsDBNull(10) ? null : r.GetInt64(10) != 0,
+                    Smeter = r.IsDBNull(11) ? null : r.GetInt64(11),
+                    SrvUid = r.IsDBNull(12) ? null : r.GetString(12),
+                    PktTs = r.IsDBNull(13) ? null : r.GetString(13),
+                    StreamBegin = r.IsDBNull(14) ? null : r.GetString(14),
+                    Ban = r.GetInt64(15) != 0,
+                });
+            }
+            return list;
+        }
+    }
+
+    /// <summary>审计事件计数（状态栏用：按 verdict 分组）</summary>
+    public Dictionary<string, long> CountAuditVerdicts(string from, string to)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT verdict, COUNT(*) FROM audit_packets
+                WHERE ts BETWEEN $from AND $to
+                GROUP BY verdict
+                """;
+            cmd.Parameters.AddWithValue("$from", from);
+            cmd.Parameters.AddWithValue("$to", to);
+            var map = new Dictionary<string, long>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                map[r.GetString(0)] = r.GetInt64(1);
+            return map;
+        }
+    }
+
     // ---------------- 数据管理 ----------------
 
     /// <summary>统计各表行数</summary>
-    public (long Minutes, long Topics, long Health) CountRows()
+    public (long Minutes, long Topics, long Health, long Audit) CountRows()
     {
         lock (_lock)
         {
@@ -763,12 +894,12 @@ public class Database
                 cmd.CommandText = $"SELECT COUNT(*) FROM {t}";
                 return (long)(cmd.ExecuteScalar() ?? 0);
             }
-            return (Count("minute_stats"), Count("topic_stats"), Count("health_snapshots"));
+            return (Count("minute_stats"), Count("topic_stats"), Count("health_snapshots"), Count("audit_packets"));
         }
     }
 
     /// <summary>清空全部统计数据（保留 settings / admin_user）</summary>
-    public (long Minutes, long Topics, long Health) ClearAllData()
+    public (long Minutes, long Topics, long Health, long Audit) ClearAllData()
     {
         lock (_lock)
         {
@@ -779,7 +910,7 @@ public class Database
                 cmd.CommandText = $"DELETE FROM {t}";
                 return cmd.ExecuteNonQuery();
             }
-            return (Del("minute_stats"), Del("topic_stats"), Del("health_snapshots"));
+            return (Del("minute_stats"), Del("topic_stats"), Del("health_snapshots"), Del("audit_packets"));
         }
     }
 
@@ -807,7 +938,7 @@ public class Database
         lock (_lock)
         {
             using var conn = Open();
-            foreach (var table in new[] { "minute_stats", "health_snapshots", "topic_stats" })
+            foreach (var table in new[] { "minute_stats", "health_snapshots", "topic_stats", "audit_packets" })
             {
                 // 分批删：每批 20000 行，直到删不动
                 // 注意：SQLite 默认不支持 DELETE ... LIMIT（语法错误），必须用 rowid 子查询分批
@@ -945,6 +1076,27 @@ public class BlacklistHistoryRow
     public string? Until { get; init; }
     public string Operator { get; init; } = "";
     public string CreatedAt { get; init; } = "";
+}
+
+/// <summary>包头审计事件行（身份控制）</summary>
+public class AuditPacketRow
+{
+    public string Ts { get; init; } = "";
+    public string Topic { get; init; } = "";
+    public string ClientId { get; init; } = "";
+    public string? ConnCallsign { get; init; }
+    public string? ConnUid { get; init; }
+    public string? PktCallsign { get; init; }
+    public string? PktUid { get; init; }
+    public string Verdict { get; init; } = "";   // KICK / WARN / FAIL
+    public long? Len { get; init; }
+    public long? FrameNum { get; init; }
+    public bool? CrcOk { get; init; }
+    public long? Smeter { get; init; }
+    public string? SrvUid { get; init; }
+    public string? PktTs { get; init; }
+    public string? StreamBegin { get; init; }
+    public bool Ban { get; init; }
 }
 
 /// <summary>呼号明细行</summary>

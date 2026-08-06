@@ -34,6 +34,8 @@ var auth = new AuthService(db);
 var health = new HostHealthCollector();
 var collector = new CollectorService(emqx, db, health);
 var topicIngest = new TopicIngestService(db);
+// 身份控制开关默认启用（最高保护）；从持久化配置恢复
+topicIngest.IdentityControlEnabled = db.GetSetting("identity_control") != "0";
 
 // 启动时从持久化配置恢复 EMQX 连接（不探测；连通性由采集循环反馈）
 var savedUrl = db.GetSetting("emqx_url");
@@ -318,14 +320,22 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
         if (!string.IsNullOrEmpty(callsign)) username = callsign;
         var clientid = root.TryGetProperty("clientid", out var c) ? c.GetString() : null;
         long bytes = 0;
+        byte[]? raw = null;
         if (root.TryGetProperty("payload", out var p) && p.ValueKind == JsonValueKind.String)
         {
             var s = p.GetString()!;
-            try { bytes = Convert.FromBase64String(s).Length; }
+            try
+            {
+                raw = Convert.FromBase64String(s);
+                bytes = raw.Length;
+            }
             catch { bytes = s.Length; }   // 非 base64 则按字符数近似
         }
         if (!string.IsNullOrEmpty(topic) && !string.IsNullOrEmpty(clientid))
+        {
             ingest.Ingest(topic, username, uid, clientid, bytes, DateTime.Now);
+            await RunIdentityAuditAsync(raw, topic, username, uid, clientid, DateTime.Now);
+        }
     }
     catch (Exception ex)
     {
@@ -333,6 +343,98 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
     }
     return Results.Json(new { ok = true });
 });
+
+// 包头审计（身份控制）：解包 FMO/RAW 包头 → 比对连接身份 → KICK 自动拉黑 / WARN 仅记录 / FAIL 降级
+async Task RunIdentityAuditAsync(byte[]? raw, string? topic, string? connCallsign, string? connUid, string? clientid, DateTime now)
+{
+    if (raw == null || raw.Length == 0) return;   // 无 payload（文本统计模式）不审计
+    var parsed = FmoRawParser.Parse(raw);
+    var ts = now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+
+    if (!parsed.Ok)
+    {
+        // FAIL：非法包（长度/len 不符/超 MTU），降级仅记录，不处置
+        try { db.WriteAuditPacket(new AuditPacketRow { Ts = ts, Topic = topic ?? "", ClientId = clientid ?? "", Verdict = "FAIL", Len = raw.Length }); }
+        catch (Exception ex) { Console.Error.WriteLine($"[Audit] FAIL 落库失败: {ex.Message}"); }
+        return;
+    }
+
+    var pktCallsign = parsed.Callsign.Trim().ToUpperInvariant();
+    var pktUid = parsed.Uid.ToString();
+    var connCs = (connCallsign ?? "").Trim().ToUpperInvariant();
+    var connU = connUid ?? "";
+
+    string verdict;
+    if (string.IsNullOrEmpty(connCs) && string.IsNullOrEmpty(connU))
+    {
+        verdict = "WARN";   // 连接无身份（匿名）→ 无法比对，仅记录
+    }
+    else
+    {
+        var csOk = !string.IsNullOrEmpty(pktCallsign) && pktCallsign == connCs;
+        var uidOk = !string.IsNullOrEmpty(pktUid) && pktUid == connU;
+        verdict = csOk && uidOk ? "PASS" : "KICK";
+    }
+
+    if (verdict == "PASS") return;   // 放行（topic_stats 已聚合）
+
+    // 异常事件：KICK（可自动拉黑）/ WARN
+    var ban = false;
+    if (verdict == "KICK" && topicIngest.IdentityControlEnabled && !string.IsNullOrEmpty(connCs))
+    {
+        var reason = $"身份控制: 包头声明 {pktCallsign}(UID {pktUid}) 与连接身份 {connCs}{(connU.Length > 0 ? $"(UID {connU})" : "")} 不符";
+        try
+        {
+            var (err, _) = await emqx.BanAsync(connCs, reason, null);
+            if (err == null)
+            {
+                ban = true;
+                try
+                {
+                    db.AddBlacklistEvent("ban", "username", connCs, reason, null, "身份控制", now);
+                    _ = collector.CollectNowAsync();   // 即时刷新在线列表
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[Audit] 拉黑留痕失败: {ex.Message}"); }
+            }
+            else
+            {
+                Console.Error.WriteLine($"[Audit] 自动拉黑 {connCs} 失败: {err}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // 防御：EMQX 未配置/URL 异常等不阻断审计落库
+            Console.Error.WriteLine($"[Audit] 自动拉黑 {connCs} 异常: {ex.Message}");
+        }
+    }
+
+    try
+    {
+        db.WriteAuditPacket(new AuditPacketRow
+        {
+            Ts = ts,
+            Topic = topic ?? "",
+            ClientId = clientid ?? "",
+            ConnCallsign = connCallsign,
+            ConnUid = connUid,
+            PktCallsign = pktCallsign,
+            PktUid = pktUid,
+            Verdict = verdict,
+            Len = parsed.Len,
+            FrameNum = parsed.FrameNum,
+            CrcOk = parsed.CrcOk,
+            Smeter = parsed.Smeter,
+            SrvUid = parsed.SrvUid.ToString(),
+            PktTs = parsed.Timestamp.ToString(),
+            StreamBegin = parsed.StreamBeginUtc.ToString(),
+            Ban = ban,
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[Audit] 事件落库失败: {ex.Message}");
+    }
+}
 
 // GET /api/topic-config — 主题统计状态
 app.MapGet("/api/topic-config", () => Results.Json(new
@@ -564,20 +666,45 @@ app.MapGet("/api/blacklist/active", async () =>
 app.MapGet("/api/blacklist/history", (int? limit, Database database) =>
     Results.Json(new { ok = true, rows = database.QueryBlacklistHistory(Math.Clamp(limit ?? 200, 1, 1000)) }));
 
+// GET /api/identity-control — 身份控制开关状态（默认启用）
+app.MapGet("/api/identity-control", () => Results.Json(new
+{
+    ok = true,
+    enabled = topicIngest.IdentityControlEnabled,
+}));
+
+// POST /api/identity-control — 设置身份控制开关（关闭 = 降级为仅标记提醒，不自动拉黑）
+app.MapPost("/api/identity-control", (IdentityControlRequest req) =>
+{
+    topicIngest.IdentityControlEnabled = req.Enabled;
+    db.SetSetting("identity_control", req.Enabled ? "1" : "0");
+    return Results.Json(new { ok = true, enabled = req.Enabled });
+});
+
+// GET /api/audit-packets — 包头审计事件（KICK/WARN/FAIL）
+app.MapGet("/api/audit-packets", (string from, string to, string? verdict, int? limit, Database database) =>
+{
+    var (f, t, err) = ParseRange(from, to);
+    if (err != null) return Results.Json(new { ok = false, error = err });
+    var rows = database.QueryAuditPackets(f, t, verdict, Math.Clamp(limit ?? 200, 1, 1000));
+    var counts = database.CountAuditVerdicts(f, t);
+    return Results.Json(new { ok = true, from = f, to = t, rows, counts });
+});
+
 // ---- 数据管理 ----
 
 // GET /api/admin/stats — 各表数据量
 app.MapGet("/api/admin/stats", (Database database) =>
 {
-    var (minutes, topics, health) = database.CountRows();
-    return Results.Json(new { ok = true, minute_stats = minutes, topic_stats = topics, health_snapshots = health });
+    var (minutes, topics, health, audit) = database.CountRows();
+    return Results.Json(new { ok = true, minute_stats = minutes, topic_stats = topics, health_snapshots = health, audit_packets = audit });
 });
 
 // POST /api/admin/clear-data — 一键清空统计数据（保留配置和管理员）
 app.MapPost("/api/admin/clear-data", (Database database) =>
 {
-    var (minutes, topics, health) = database.ClearAllData();
-    return Results.Json(new { ok = true, cleared = new { minute_stats = minutes, topic_stats = topics, health_snapshots = health } });
+    var (minutes, topics, health, audit) = database.ClearAllData();
+    return Results.Json(new { ok = true, cleared = new { minute_stats = minutes, topic_stats = topics, health_snapshots = health, audit_packets = audit } });
 });
 
 // POST /api/admin/reset — 完全重置审计监控工具（清空全部数据+配置+管理员，停用规则引擎，回到首次安装）
@@ -623,3 +750,4 @@ record ChangePasswordRequest(string? OldPassword, string? NewPassword);
 record TopicConfigRequest(bool Enable, string? Topic, string? WebhookUrl);
 record BlacklistBanRequest(string? Who, string? Reason, string? Until);
 record BlacklistUnbanRequest(string? Who);
+record IdentityControlRequest(bool Enabled);

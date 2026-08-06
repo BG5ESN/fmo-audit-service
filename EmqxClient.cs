@@ -578,10 +578,11 @@ public class EmqxClient
     private static bool IsNotFound(string? err)
         => err != null && !err.Contains("404") && !err.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题；client_attrs 用于 6.x 自动带出 callsign）</summary>
+    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题；client_attrs 用于 6.x 自动带出 callsign；
+    /// base64_encode(payload)：二进制 payload 必须 base64 才能无损嵌入 webhook JSON——直接内嵌原始字节会破坏 JSON 导致消息被丢弃）</summary>
     private async Task<string?> UpsertTopicRuleAsync(string topic, string actionRef)
     {
-        var ruleSql = $"SELECT clientid, username, topic, payload, qos, timestamp, client_attrs FROM \"{topic}/#\"";
+        var ruleSql = $"SELECT clientid, username, topic, base64_encode(payload) as payload, qos, timestamp, client_attrs FROM \"{topic}/#\"";
         var ruleBody = JsonSerializer.Serialize(new
         {
             name = TopicRuleName,
@@ -645,7 +646,7 @@ public class EmqxClient
     /// <summary>拉黑一个呼号（username 粒度）并立即踢掉其在线连接。返回 (错误, 被踢客户端数)</summary>
     public async Task<(string? Error, int Kicked)> BanAsync(string who, string? reason, string? untilRfc3339)
     {
-        // 1) 写入 EMQX banned（拒绝新连接）
+        // 1) 写入 EMQX banned（拒绝新连接）；ALREADY_EXISTS = 已在黑名单，幂等视为成功
         var body = JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["as"] = "username",
@@ -654,7 +655,7 @@ public class EmqxClient
             ["until"] = untilRfc3339 ?? "infinity",
         });
         var resp = await SendAsync(HttpMethod.Post, "/api/v5/banned", body);
-        if (resp.Error != null) return (resp.Error, 0);
+        if (resp.Error != null && resp.Error != "ALREADY_EXISTS") return (resp.Error, 0);
 
         // 2) 查该呼号在线 clientid → 踢下线（banned 不自动踢已连接）
         var clients = await GetClientsByUsernameAsync(who);
@@ -746,6 +747,10 @@ public class EmqxClient
                 return ($"HTTP_{(int)resp.StatusCode}", body);
             }
             return (null, body);
+        }
+        catch (UriFormatException)
+        {
+            return ("未配置 EMQX 连接（URL 无效）", null);
         }
         catch (TaskCanceledException)
         {

@@ -3,17 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>排行榜 - EMQX 审计监控</title>
+<title>身份审计 - EMQX 审计监控</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div class="topbar">
   <span class="topbar-title">EMQX 审计监控</span>
   <nav class="topbar-nav">
-    <a href="/" class="active">排行榜</a>
+    <a href="/">排行榜</a>
     <a href="/topics.html">主题统计</a>
     <a href="/online.html">在线</a>
-    <a href="/audit.html">身份审计</a>
+    <a href="/audit.html" class="active">身份审计</a>
     <a href="/blacklist.html">黑名单</a>
     <a href="/health.html">健康</a>
     <a href="/settings.html">配置</a>
@@ -26,20 +26,20 @@
 
 <div class="filter-bar">
   <span class="filter-label">时间范围</span>
+  <button class="chip" data-range="1h">近1小时</button>
   <button class="chip" data-range="today">今天</button>
-  <button class="chip" data-range="yesterday">昨天</button>
-  <button class="chip" data-range="7d">近7天</button>
+  <button class="chip active" data-range="7d">近7天</button>
   <button class="chip" data-range="30d">近30天</button>
-  <button class="chip active" data-range="custom">自定义</button>
+  <span class="filter-label" style="margin-left:8px">起始</span>
   <input type="datetime-local" id="from">
   <span class="filter-label">至</span>
   <input type="datetime-local" id="to">
-  <span class="filter-label" style="margin-left:8px">排序</span>
-  <button class="chip active" data-order="oct">字节量</button>
-  <button class="chip" data-order="msg">消息数</button>
-  <button class="chip" data-order="pkt">包数</button>
+  <span class="filter-label" style="margin-left:8px">类型</span>
+  <button class="chip active" data-verdict="">全部异常</button>
+  <button class="chip" data-verdict="KICK">身份不符</button>
+  <button class="chip" data-verdict="WARN">未知身份</button>
+  <button class="chip" data-verdict="FAIL">非法包</button>
   <button class="btn btn-small btn-primary" id="query">查询</button>
-  <button class="btn btn-small" id="export">导出 CSV</button>
   <label style="margin-left:12px;font-size:12px;color:#666;display:flex;align-items:center;gap:4px;cursor:pointer">
     <input type="checkbox" id="auto-refresh" checked> 自动刷新
   </label>
@@ -48,6 +48,7 @@
 <div class="stats-bar">
   <span id="range-desc"></span>
   <span id="total-rows"></span>
+  <span id="ic-status" style="margin-left:12px"></span>
   <span class="stat-spacer"></span>
   <span id="query-time"></span>
 </div>
@@ -56,19 +57,21 @@
   <table>
     <thead>
       <tr>
-        <th style="width:50px">排名</th>
-        <th>呼号</th>
-        <th class="num">设备数</th>
-        <th class="num">总字节</th>
-        <th class="num">总消息</th>
-        <th class="num">总包数</th>
-        <th class="num">重连次数</th>
-        <th style="width:70px">操作</th>
+        <th style="width:44px">判定</th>
+        <th>时间</th>
+        <th>连接身份（实际连接者）</th>
+        <th>包头声明（payload 自称）</th>
+        <th>clientid</th>
+        <th class="num">包长</th>
+        <th class="num">帧数</th>
+        <th class="num">S表</th>
+        <th class="num">CRC</th>
+        <th>处置</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
   </table>
-  <div id="empty" class="hidden" style="padding:30px;text-align:center;color:#999;font-size:13px">该时间段内没有客户端流量数据</div>
+  <div id="empty" class="hidden" style="padding:30px;text-align:center;color:#999;font-size:13px">该时间段内没有异常审计事件（包头身份与连接身份一致 = 正常放行，不记录）</div>
 </div>
 
 <script src="/app.js"></script>

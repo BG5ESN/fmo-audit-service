@@ -13,6 +13,7 @@
     <a href="/">排行榜</a>
     <a href="/topics.html">主题统计</a>
     <a href="/online.html">在线</a>
+    <a href="/audit.html">身份审计</a>
     <a href="/blacklist.html">黑名单</a>
     <a href="/health.html">健康</a>
     <a href="/settings.html" class="active">配置</a>
@@ -76,6 +77,20 @@
         <span id="topic-msg" class="form-msg" style="margin:0"></span>
       </div>
       <div class="form-msg" id="topic-info" style="margin-top:10px;color:#999">启用后自动在 EMQX 上创建规则引擎（连接器 emqx-monitor-ingest + 规则），只统计该主题下的消息，其他主题不采集。</div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">身份控制（包头身份一致性，默认启用）</div>
+    <div class="config-section-body">
+      <div class="kv">状态：<b id="ic-status">加载中…</b></div>
+      <div class="kv" style="line-height:1.7">对 FMO/RAW 每个数据包解包头，比对<b>包头声明的呼号/UID</b>与<b>连接身份</b>（认证服务端写入）。不一致视为身份伪造，<b>立即自动拉黑该连接身份</b>（踢下线 + 禁连 + 留痕）。</div>
+      <div class="kv" style="color:#999">关闭后降级为仅记录提醒（身份审计页可见），不自动拉黑。开放网络默认最高保护，建议保持启用。</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button class="btn btn-primary" id="ic-enable">启用身份控制</button>
+        <button class="btn" id="ic-disable">关闭（仅提醒）</button>
+        <span id="ic-msg" class="form-msg" style="margin:0"></span>
+      </div>
     </div>
   </div>
 

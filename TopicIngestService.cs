@@ -25,6 +25,9 @@ public class TopicIngestService : BackgroundService
     public long TotalIngested { get; private set; }
     public DateTime LastIngestAt { get; private set; }
 
+    /// <summary>身份控制开关（默认启用=最高保护）：KICK 时自动拉黑连接身份；关闭后降级为仅记录</summary>
+    public volatile bool IdentityControlEnabled = true;
+
     /// <summary>重置内存状态（完全重置时调用）：清空聚合缓冲与计数</summary>
     public void Reset()
     {
