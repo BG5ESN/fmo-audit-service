@@ -40,6 +40,11 @@ public class CollectorService : BackgroundService
     public int LastClientCount { get; private set; }
     public string? LastStatus { get; private set; }
 
+    /// <summary>最近一次采集的在线客户端列表（只读副本；在线页直接读此缓存，不重复打 EMQX）</summary>
+    public IReadOnlyList<EmqxClientInfo> LastClients { get; private set; } = [];
+    /// <summary>LastClients 的采集时间（本地）</summary>
+    public DateTime? LastClientsAt { get; private set; }
+
     /// <summary>重置采集器内存状态（完全重置时调用）：清空计数器基线，新周期从零开始</summary>
     public void ResetState()
     {
@@ -53,7 +58,11 @@ public class CollectorService : BackgroundService
         LastError = null;
         LastClientCount = 0;
         LastStatus = null;
+        LastClients = [];
+        LastClientsAt = null;
     }
+
+    private int _collecting;   // 防重入：定时循环与手动触发（拉黑后即时刷新）不并发
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -71,6 +80,14 @@ public class CollectorService : BackgroundService
             if (IsConfigured)
                 await CollectAsync();
         }
+    }
+
+    /// <summary>立即触发一次采集（拉黑/解封后刷新在线列表缓存用）；正在采集时忽略本次触发</summary>
+    public async Task CollectNowAsync()
+    {
+        if (!IsConfigured || Interlocked.Exchange(ref _collecting, 1) != 0) return;
+        try { await CollectAsync(); }
+        finally { Interlocked.Exchange(ref _collecting, 0); }
     }
 
     private async Task CollectAsync()
@@ -132,6 +149,8 @@ public class CollectorService : BackgroundService
 
             _db.WriteMinuteStats(rows);
             LastClientCount = result.Clients.Count;
+            LastClients = result.Clients;   // 缓存在线列表（在线页读取；60s 内新鲜）
+            LastClientsAt = now;
 
             // ---- 2) 健康采集 ----
             var health = _health.Collect();

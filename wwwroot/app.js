@@ -814,6 +814,83 @@
     }, 30000);
   }
 
+  // ---------------- 在线列表页 ----------------
+
+  if (page === '/online.html') { initOnline(); }
+
+  function initOnline() {
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
+    refreshAfterBl = load;
+
+    // RFC3339 → 本地 "yyyy-MM-dd HH:mm:ss"（服务器时区）
+    function fmtTs(rfc3339) {
+      if (!rfc3339) return '-';
+      const d = new Date(rfc3339);
+      if (isNaN(d)) return rfc3339;
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    // 在线时长
+    function fmtDur(rfc3339) {
+      if (!rfc3339) return '';
+      const d = new Date(rfc3339);
+      if (isNaN(d)) return '';
+      const min = Math.floor((Date.now() - d.getTime()) / 60000);
+      if (min < 1) return '刚连接';
+      if (min < 60) return `${min} 分钟`;
+      const h = Math.floor(min / 60), m = min % 60;
+      return m ? `${h} 小时 ${m} 分` : `${h} 小时`;
+    }
+
+    async function load() {
+      const d = await api('/api/online');
+      const rows = d.rows || [];
+      const sum = $('online-summary');
+      const upd = $('online-updated');
+      if (!d.collecting) {
+        sum.className = 'status-err';
+        sum.textContent = '未连接 EMQX';
+        upd.textContent = '';
+      } else {
+        sum.className = '';
+        sum.textContent = `在线 ${d.total} 个客户端`;
+        upd.textContent = `（数据更新于 ${d.updated_at || '-'}，每 60 秒采集一次）`;
+        upd.style.color = '#999';
+        upd.style.fontSize = '12px';
+      }
+      const tbody = $('rows');
+      tbody.innerHTML = '';
+      $('empty').classList.toggle('hidden', rows.length > 0);
+      rows.sort((a, b) => {
+        if (a.is_anonymous !== b.is_anonymous) return a.is_anonymous ? 1 : -1;
+        return String(a.name || a.clientid).localeCompare(String(b.name || b.clientid), 'zh');
+      });
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const banned = blMap && blMap[r.name];
+        const name = r.name || r.clientid;   // 匿名显示 clientid
+        tr.innerHTML = `
+          <td>${esc(name)}${banned ? '<span class="ban-badge">已拉黑</span>' : ''}${r.uid ? `（${esc(r.uid)}）` : ''}</td>
+          <td class="mono">${esc(r.clientid)}</td>
+          <td class="mono">${esc(r.ip || '-')}</td>
+          <td title="在线时长：${esc(fmtDur(r.connected_at))}">${fmtTs(r.connected_at)}</td>
+          <td class="num">${fmtBytes(r.send_oct)}</td>
+          <td class="num">${fmtBytes(r.recv_oct)}</td>
+          <td>${banCellHtml({ name, isAnonymous: !!r.is_anonymous })}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    load();
+    setInterval(() => {
+      if (document.hidden) return;
+      if (!$('auto-refresh') || !$('auto-refresh').checked) return;
+      load();
+    }, 30000);
+    bindBanActions($('rows'));
+  }
+
   // ---------------- 黑名单页 ----------------
 
   if (page === '/blacklist.html') { initBlacklist(); }

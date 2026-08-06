@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在线列表 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-title">EMQX 审计监控</span>
+  <nav class="topbar-nav">
+    <a href="/">排行榜</a>
+    <a href="/topics.html">主题统计</a>
+    <a href="/online.html" class="active">在线</a>
+    <a href="/blacklist.html">黑名单</a>
+    <a href="/health.html">健康</a>
+    <a href="/settings.html">配置</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="collect-status"></span>
+    <a id="logout">退出登录</a>
+  </div>
+</div>
+
+<div class="stats-bar">
+  <span id="online-summary"></span>
+  <span id="online-updated"></span>
+  <span class="stat-spacer"></span>
+  <label style="font-size:12px;color:#666;display:flex;align-items:center;gap:4px;cursor:pointer">
+    <input type="checkbox" id="auto-refresh" checked> 自动刷新
+  </label>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>呼号</th>
+        <th>clientid</th>
+        <th>IP 地址</th>
+        <th>连接时间</th>
+        <th class="num">发送</th>
+        <th class="num">接收</th>
+        <th style="width:70px">操作</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="hidden" style="padding:30px;text-align:center;color:#999;font-size:13px">当前没有在线客户端（或尚未连接 EMQX）</div>
+</div>
+
+<script src="/app.js"></script>
+<div id="modal-root"></div>
+</body>
+</html>

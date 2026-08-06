@@ -458,6 +458,36 @@ app.MapGet("/api/check", async () =>
     });
 });
 
+// GET /api/online — 当前在线客户端列表（采集器 60s 缓存，不重复打 EMQX）
+app.MapGet("/api/online", () =>
+{
+    var list = collector.LastClients;
+    return Results.Json(new
+    {
+        ok = true,
+        collecting = collector.IsConfigured,
+        // 数据新鲜度：采集时间（本地）
+        updated_at = collector.LastClientsAt?.ToString("yyyy-MM-dd HH:mm:ss"),
+        total = list.Count,
+        rows = list.Select(c => new
+        {
+            // 呼号优先 client_attrs.callsign；username "undefined"（Erlang atom 序列化）归一为 null；都没有 → 匿名
+            name = c.Callsign ?? NormalizeUser(c.Username),
+            uid = c.Uid,
+            is_anonymous = string.IsNullOrEmpty(c.Callsign) && string.IsNullOrEmpty(NormalizeUser(c.Username)),
+            clientid = c.ClientId,
+            ip = c.IpAddress,
+            connected_at = c.ConnectedAt,       // RFC3339，前端转本地显示
+            send_oct = c.SendOct,
+            recv_oct = c.RecvOct,
+            send_msg = c.SendMsg,
+            recv_msg = c.RecvMsg,
+        }),
+    });
+
+    static string? NormalizeUser(string? u) => u == "undefined" ? null : u;
+});
+
 // ---- 黑名单 API（拉黑/解封/当前生效/操作历史）----
 // 权威执行在 EMQX（banned API），本地 blacklist_audit 留痕；EMQX 操作失败不写流水。
 
@@ -489,6 +519,8 @@ app.MapPost("/api/blacklist/ban", async (BlacklistBanRequest req, HttpContext ct
 
     db.AddBlacklistEvent("ban", "username", who, req.Reason?.Trim(), untilLocal,
         ctx.User.Identity?.Name ?? "?", DateTime.Now);
+    // 拉黑后即时刷新在线列表缓存（被踢的客户端立即从"在线"消失）
+    _ = collector.CollectNowAsync();
     return Results.Json(new { ok = true, who, kicked, until = untilLocal });
 });
 
@@ -507,6 +539,7 @@ app.MapPost("/api/blacklist/unban", async (BlacklistUnbanRequest req, HttpContex
 
     db.AddBlacklistEvent("unban", "username", who, null, null,
         ctx.User.Identity?.Name ?? "?", DateTime.Now);
+    _ = collector.CollectNowAsync();   // 即时刷新在线列表缓存
     return Results.Json(new { ok = true, who });
 });
 
