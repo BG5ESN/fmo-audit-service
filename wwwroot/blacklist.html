@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>黑名单 - EMQX 审计监控</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-title">EMQX 审计监控</span>
+  <nav class="topbar-nav">
+    <a href="/">排行榜</a>
+    <a href="/topics.html">主题统计</a>
+    <a href="/blacklist.html" class="active">黑名单</a>
+    <a href="/health.html">健康</a>
+    <a href="/settings.html">配置</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="collect-status"></span>
+    <a id="logout">退出登录</a>
+  </div>
+</div>
+
+<div class="stats-bar">
+  <span id="bl-status"></span>
+  <span class="stat-spacer"></span>
+  <button class="btn btn-small btn-primary" id="bl-add">手动拉黑呼号</button>
+</div>
+
+<div class="chart-box" style="padding-top:8px">
+  <div class="chart-card">
+    <div class="chart-title">当前生效黑名单（EMQX 拒绝连接，到期自动解除）</div>
+    <div class="table-wrap" style="padding:0 0 12px">
+      <table id="active-table" style="margin-top:0;min-width:640px">
+        <thead>
+          <tr>
+            <th>呼号</th>
+            <th>原因</th>
+            <th>到期时间</th>
+            <th>操作人</th>
+            <th>拉黑时间</th>
+            <th style="width:90px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="active-rows"></tbody>
+      </table>
+      <div id="active-empty" class="hidden" style="padding:24px;text-align:center;color:#999;font-size:13px">当前没有生效中的黑名单</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title">操作历史（拉黑/解封留痕）</div>
+    <div class="table-wrap" style="padding:0 0 12px">
+      <table id="history-table" style="margin-top:0;min-width:640px">
+        <thead>
+          <tr>
+            <th style="width:60px">操作</th>
+            <th>呼号</th>
+            <th>原因</th>
+            <th>封禁到期</th>
+            <th>操作人</th>
+            <th>时间</th>
+          </tr>
+        </thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+      <div id="history-empty" class="hidden" style="padding:24px;text-align:center;color:#999;font-size:13px">暂无操作记录</div>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+<div id="modal-root"></div>
+</body>
+</html>

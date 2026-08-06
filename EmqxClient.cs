@@ -638,6 +638,91 @@ public class EmqxClient
         return null;
     }
 
+    // ---------------- 黑名单（banned API，5.8.6 / 6.2.2 实测一致） ----------------
+    // 语义：banned 只阻止新连接，不踢已连接客户端——拉黑必须两步：POST banned + kickout。
+    // until 传 RFC3339（服务器自动转 UTC 存储）；"infinity" = 永久。
+
+    /// <summary>拉黑一个呼号（username 粒度）并立即踢掉其在线连接。返回 (错误, 被踢客户端数)</summary>
+    public async Task<(string? Error, int Kicked)> BanAsync(string who, string? reason, string? untilRfc3339)
+    {
+        // 1) 写入 EMQX banned（拒绝新连接）
+        var body = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["as"] = "username",
+            ["who"] = who,
+            ["reason"] = reason,
+            ["until"] = untilRfc3339 ?? "infinity",
+        });
+        var resp = await SendAsync(HttpMethod.Post, "/api/v5/banned", body);
+        if (resp.Error != null) return (resp.Error, 0);
+
+        // 2) 查该呼号在线 clientid → 踢下线（banned 不自动踢已连接）
+        var clients = await GetClientsByUsernameAsync(who);
+        if (clients.Count == 0) return (null, 0);
+        var kick = await SendAsync(HttpMethod.Post, "/api/v5/clients/kickout/bulk", JsonSerializer.Serialize(clients));
+        return kick.Error == null ? (null, clients.Count) : ($"踢下线失败: {kick.Error}", 0);
+    }
+
+    /// <summary>查询某呼号（username 精确匹配）当前在线 clientid 列表</summary>
+    public async Task<List<string>> GetClientsByUsernameAsync(string username)
+    {
+        var list = new List<string>();
+        var resp = await SendAsync(HttpMethod.Get, $"/api/v5/clients?username={Uri.EscapeDataString(username)}&limit=10000", null);
+        if (resp.Error != null) return list;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var c in data.EnumerateArray())
+                {
+                    if (c.TryGetProperty("clientid", out var id) && id.GetString() is { Length: > 0 } cid)
+                        list.Add(cid);
+                }
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>解封呼号（不在黑名单时幂等成功，不报错）</summary>
+    public async Task<string?> UnbanAsync(string who)
+    {
+        var resp = await SendAsync(HttpMethod.Delete, $"/api/v5/banned/username/{Uri.EscapeDataString(who)}", null);
+        if (resp.Error == null) return null;
+        return resp.Error == "NOT_FOUND" ? null : resp.Error;   // 已不在黑名单 = 已解封
+    }
+
+    /// <summary>读取 EMQX 侧当前黑名单（username 粒度；管理页与本地流水对照用）</summary>
+    public async Task<List<BannedEntry>> GetBannedAsync()
+    {
+        var list = new List<BannedEntry>();
+        var resp = await SendAsync(HttpMethod.Get, "/api/v5/banned?limit=1000", null);
+        if (resp.Error != null) return list;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var b in data.EnumerateArray())
+                {
+                    var asType = b.TryGetProperty("as", out var a) ? a.GetString() : null;
+                    var who = b.TryGetProperty("who", out var w) ? w.GetString() : null;
+                    if (asType != "username" || string.IsNullOrEmpty(who)) continue;   // 只展示呼号粒度
+                    list.Add(new BannedEntry
+                    {
+                        Who = who,
+                        Reason = b.TryGetProperty("reason", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null,
+                        Until = b.TryGetProperty("until", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null,
+                        By = b.TryGetProperty("by", out var by) && by.ValueKind == JsonValueKind.String ? by.GetString() : null,
+                    });
+                }
+            }
+        }
+        catch { }
+        return list;
+    }
+
     /// <summary>通用带认证的请求（返回 Body + 错误码）</summary>
     private async Task<(string? Error, string? Body)> SendAsync(HttpMethod method, string path, string? jsonBody)
     {
@@ -698,6 +783,15 @@ public class CompatCheck
     public string Path { get; init; } = "";
     public bool Ok { get; init; }
     public string Note { get; init; } = "";
+}
+
+/// <summary>EMQX banned 条目（username 粒度）</summary>
+public class BannedEntry
+{
+    public string Who { get; init; } = "";
+    public string? Reason { get; init; }
+    public string? Until { get; init; }   // RFC3339 或 "infinity"（永久）
+    public string? By { get; init; }
 }
 
 public class ClientsResult

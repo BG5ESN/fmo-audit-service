@@ -36,6 +36,8 @@ systemctl status emqx-monitor-server
 # 4. 登录后在"配置"页填入 EMQX 地址 + API Key（Dashboard → 管理 → API 密钥）
 ```
 
+**黑名单功能权限**：拉黑/解封调用 EMQX 黑名单 API（`/api/v5/banned`）+ 踢下线（`/clients/kickout/bulk`），API Key 需有相应权限。EMQX 6.x 若创建 Key 时限制了 scopes，需包含 `connections`（含 banned）与 `clients`（踢下线）范围；直接用 administrator 角色则无需配置。
+
 **端口冲突**：改端口只需改 service 文件的 `EMQX_MONITOR_PORT`。
 
 **HTTPS**（推荐，套反向代理）：

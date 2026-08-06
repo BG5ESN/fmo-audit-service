@@ -60,6 +60,137 @@
     location.href = '/login.html';
   });
 
+  // ---------------- 黑名单（排行榜 / 主题 / 黑名单页共用） ----------------
+
+  let blMap = null, blMapAt = 0;
+
+  // 当前生效黑名单（本地推导 + EMQX 侧对照），60s 缓存
+  async function getBlacklistActive(force) {
+    const now = Date.now();
+    if (!force && blMap && now - blMapAt < 60000) return blMap;
+    try {
+      const d = await api('/api/blacklist/active');
+      const map = {};
+      (d.local || []).forEach(x => { map[x.who] = { who: x.who, reason: x.reason || '', until: x.until, operator: x.operator, createdAt: x.createdAt, src: 'local' }; });
+      (d.emqx_only || []).forEach(x => { if (!map[x.who]) map[x.who] = { who: x.who, reason: x.reason || '', until: x.until, operator: '', createdAt: '', src: 'emqx' }; });
+      blMap = map; blMapAt = now;
+      return map;
+    } catch (e) { return blMap || {}; }
+  }
+  function blInvalidate() { blMap = null; }
+
+  // 操作列 HTML：匿名客户端（无呼号）不提供拉黑
+  function banCellHtml(r) {
+    if (r.isAnonymous) return '<span class="ban-note">匿名</span>';
+    const b = blMap && blMap[r.name];
+    return b
+      ? `<button class="btn btn-small ban-btn banned" data-unban="${esc(r.name)}">解封</button>`
+      : `<button class="btn btn-small ban-btn" data-ban="${esc(r.name)}">拉黑</button>`;
+  }
+
+  // 表格操作列事件委托（渲染后调用一次即可）
+  function bindBanActions(tbody) {
+    tbody.onclick = e => {
+      const un = e.target.closest('[data-unban]');
+      const bn = e.target.closest('[data-ban]');
+      if (un) { doUnban(un.dataset.unban); return; }
+      if (bn) { openBanModal(bn.dataset.ban); return; }
+    };
+  }
+
+  // 拉黑弹窗：who 为空 = 手动输入呼号
+  function openBanModal(who) {
+    const root = $('modal-root');
+    if (!root) return;
+    const needInput = !who;
+    root.innerHTML = `
+      <div class="modal-mask">
+        <div class="modal">
+          <div class="modal-title">${needInput ? '手动拉黑呼号' : `拉黑呼号 ${esc(who)}`}</div>
+          <div class="modal-body">
+            ${needInput ? '<div class="form-row"><label>呼号（username）</label><input class="text-input" id="ban-who" placeholder="如 BG5ABC"></div>' : ''}
+            <label>原因（留痕，建议填写）</label>
+            <textarea id="ban-reason" placeholder="如：伪造数据包干扰信道"></textarea>
+            <div style="margin-top:12px">
+              <label>封禁时长（到期自动解除）</label>
+              <div class="dur-row">
+                <label><input type="radio" name="ban-dur" value="" checked> 永久</label>
+                <label><input type="radio" name="ban-dur" value="1"> 1小时</label>
+                <label><input type="radio" name="ban-dur" value="6"> 6小时</label>
+                <label><input type="radio" name="ban-dur" value="24"> 24小时</label>
+                <label><input type="radio" name="ban-dur" value="custom"> 自定义</label>
+                <input type="datetime-local" id="ban-until" class="hidden">
+              </div>
+            </div>
+            <div id="ban-msg" class="form-msg"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn" id="ban-cancel">取消</button>
+            <button class="btn btn-primary" id="ban-ok">拉黑并踢下线</button>
+          </div>
+        </div>
+      </div>`;
+    const mask = root.querySelector('.modal-mask');
+    const msg = $('ban-msg');
+    const untilInput = $('ban-until');
+    root.querySelectorAll('input[name="ban-dur"]').forEach(r => {
+      r.onchange = () => { untilInput.classList.toggle('hidden', r.value !== 'custom'); };
+    });
+    $('ban-cancel').onclick = () => { root.innerHTML = ''; };
+    mask.onclick = e => { if (e.target === mask) root.innerHTML = ''; };
+    $('ban-ok').onclick = async () => {
+      const who2 = needInput ? $('ban-who').value.trim() : who;
+      const msg2 = msg;
+      msg2.className = 'form-msg err';
+      if (!who2) { msg2.textContent = '请输入呼号'; return; }
+      const reason = $('ban-reason').value.trim();
+      const dur = root.querySelector('input[name="ban-dur"]:checked').value;
+      let until = null;
+      if (dur === 'custom') {
+        until = $('ban-until').value;
+        if (!until) { msg2.textContent = '请选择自定义到期时间'; return; }
+      } else if (dur) {
+        const d = new Date(Date.now() + dur * 3600 * 1000);
+        const pad = n => String(n).padStart(2, '0');
+        until = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+      $('ban-ok').disabled = true;
+      msg2.className = 'form-msg';
+      msg2.textContent = '正在拉黑…';
+      try {
+        const d = await api('/api/blacklist/ban', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ who: who2, reason, until })
+        });
+        if (d.ok) {
+          msg2.className = 'form-msg ok';
+          msg2.textContent = d.kicked > 0 ? `已拉黑 ${d.who}，踢下线 ${d.kicked} 个在线客户端` : `已拉黑 ${d.who}（当前无在线客户端）`;
+          blInvalidate();
+          setTimeout(() => { root.innerHTML = ''; refreshAfterBl(); }, 1200);
+        } else {
+          msg2.className = 'form-msg err';
+          msg2.textContent = d.error || '拉黑失败';
+          $('ban-ok').disabled = false;
+        }
+      } catch (e) { /* 401 已处理 */ }
+    };
+  }
+
+  async function doUnban(who) {
+    if (!confirm(`确认解封 ${who}？解封后该呼号可重新连接 EMQX。`)) return;
+    try {
+      const d = await api('/api/blacklist/unban', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ who })
+      });
+      if (d.ok) { blInvalidate(); refreshAfterBl(); }
+      else alert(d.error || '解封失败');
+    } catch (e) { /* 401 已处理 */ }
+  }
+
+  // 黑名单操作后刷新当前页（各页面在 init 时赋值）
+  let refreshAfterBl = () => {};
+
   // ---------------- 排行榜页 ----------------
 
   if (page === '/' || page === '/index.html') { initLeaderboard(); }
@@ -125,6 +256,7 @@
       try {
         const d = await api(`/api/leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
         if (!d.ok) { alert(d.error || '查询失败'); return; }
+        await getBlacklistActive();
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
         $('total-rows').textContent = d.rows.length ? `共 ${d.rows.length} 个呼号` : '';
         $('query-time').textContent = `查询耗时 ${Date.now() - started}ms`;
@@ -140,14 +272,16 @@
       rows.forEach((r, i) => {
         const tr = document.createElement('tr');
         const rankCls = i === 0 ? 'rank-top1' : i === 1 ? 'rank-top2' : i === 2 ? 'rank-top3' : '';
+        const banned = blMap && blMap[r.name];
         tr.innerHTML = `
           <td class="num"><span class="${rankCls}">${i + 1}</span></td>
-          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}</a></td>
+          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}${banned ? '<span class="ban-badge">已拉黑</span>' : ''}</a></td>
           <td class="num">${r.deviceCount}</td>
           <td class="num">${fmtBytes(r.totalOct)}</td>
           <td class="num">${fmtNum(r.totalMsg)}</td>
           <td class="num">${fmtNum(r.totalPkt)}</td>
-          <td class="num">${r.reconnectCount > 0 ? '<span class="reconnect-badge">' + r.reconnectCount + '</span>' : 0}</td>`;
+          <td class="num">${r.reconnectCount > 0 ? '<span class="reconnect-badge">' + r.reconnectCount + '</span>' : 0}</td>
+          <td>${banCellHtml(r)}</td>`;
         tr.querySelector('.name-cell').onclick = () => toggleDetail(tr, r.name, ord);
         tbody.appendChild(tr);
       });
@@ -163,7 +297,7 @@
       const d = await api(`/api/leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       const detail = document.createElement('tr');
       detail.className = 'detail-row';
-      detail.innerHTML = `<td colspan="7"><div class="detail-box">
+      detail.innerHTML = `<td colspan="8"><div class="detail-box">
         <h4>呼号 ${esc(name)} — clientid 明细（${d.rows.length} 行）</h4>
         <table class="detail-table">
           <thead><tr><th>clientid</th><th class="num">发送字节</th><th class="num">接收字节</th><th class="num">发送消息</th><th class="num">接收消息</th><th class="num">发送包</th><th class="num">接收包</th><th>重连</th></tr></thead>
@@ -192,6 +326,8 @@
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
+    refreshAfterBl = query;
+    bindBanActions($('rows'));
     // 排行榜自动刷新（30 秒；勾选"自动刷新"才刷，页面隐藏时不刷）
     setInterval(() => {
       if (document.hidden) return;
@@ -407,6 +543,7 @@
       try {
         const d = await api(`/api/topic-leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
         if (!d.ok) { alert(d.error || '查询失败'); return; }
+        await getBlacklistActive();
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
         $('total-rows').textContent = d.rows.length ? `共 ${d.rows.length} 个呼号` : '';
         render(d.rows, d.topic);
@@ -613,12 +750,14 @@
       rows.forEach((r, i) => {
         const tr = document.createElement('tr');
         const rankCls = i === 0 ? 'rank-top1' : i === 1 ? 'rank-top2' : i === 2 ? 'rank-top3' : '';
+        const banned = blMap && blMap[r.name];
         tr.innerHTML = `
           <td class="num"><span class="${rankCls}">${i + 1}</span></td>
-          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}</a></td>
+          <td><a class="name-cell" data-name="${esc(r.name)}">${showName(r.name, r.uid)}${banned ? '<span class="ban-badge">已拉黑</span>' : ''}</a></td>
           <td class="num">${r.deviceCount}</td>
           <td class="num">${fmtNum(r.totalMsg)}</td>
-          <td class="num">${fmtBytes(r.totalBytes)}</td>`;
+          <td class="num">${fmtBytes(r.totalBytes)}</td>
+          <td>${banCellHtml(r)}</td>`;
         tr.querySelector('.name-cell').onclick = () => toggleDetail(tr, r.name, tpc);
         tbody.appendChild(tr);
       });
@@ -632,7 +771,7 @@
       const d = await api(`/api/topic-leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       const detail = document.createElement('tr');
       detail.className = 'detail-row';
-      detail.innerHTML = `<td colspan="5"><div class="detail-box">
+      detail.innerHTML = `<td colspan="6"><div class="detail-box">
         <h4>呼号 ${esc(name)} — clientid 明细（${d.rows.length} 行）</h4>
         <table class="detail-table">
           <thead><tr><th>clientid</th><th>主题</th><th class="num">消息数</th><th class="num">字节数</th></tr></thead>
@@ -659,6 +798,8 @@
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
+    refreshAfterBl = () => { query(); loadTimeline(); };
+    bindBanActions($('rows'));
     // 时间轴自动刷新（30 秒；勾选"自动刷新"才刷，页面隐藏时不刷，保持缩放/平移窗口）
     setInterval(() => {
       if (document.hidden) return;
@@ -671,6 +812,68 @@
         }
       }).catch(() => {});
     }, 30000);
+  }
+
+  // ---------------- 黑名单页 ----------------
+
+  if (page === '/blacklist.html') { initBlacklist(); }
+
+  function initBlacklist() {
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
+    refreshAfterBl = load;
+
+    async function load() {
+      const d = await api('/api/blacklist/active');
+      const st = $('bl-status');
+      if (!d.emqx_reachable) {
+        st.className = 'status-err';
+        st.textContent = '未连接 EMQX（黑名单操作不可用，仅展示本地记录）';
+      } else {
+        st.className = '';
+        st.textContent = `当前生效 ${d.local.length} 个${d.emqx_only.length ? `，EMQX 侧另有 ${d.emqx_only.length} 个手动拉黑` : ''}`;
+      }
+      // 生效列表：本地记录 + EMQX 侧对照（来源标记）
+      const tbody = $('active-rows');
+      tbody.innerHTML = '';
+      const rows = d.local.map(x => Object.assign({}, x, { src: 'local' }))
+        .concat(d.emqx_only.map(x => Object.assign({}, x, { src: 'emqx' })));
+      $('active-empty').classList.toggle('hidden', rows.length > 0);
+      rows.forEach(x => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${esc(x.who)}${x.src === 'emqx' ? ' <span class="ban-badge">EMQX</span>' : ''}</td>
+          <td class="ban-reason">${esc(x.reason || '-')}</td>
+          <td>${x.until ? esc(x.until) : '永久'}</td>
+          <td>${esc(x.operator || (x.src === 'emqx' ? 'EMQX 手动' : '-'))}</td>
+          <td>${esc(x.createdAt || '-')}</td>
+          <td>${x.src === 'emqx' ? '<span class="ban-note">请到 EMQX 解封</span>' : `<button class="btn btn-small ban-btn banned" data-unban="${esc(x.who)}">解封</button>`}</td>`;
+        tbody.appendChild(tr);
+      });
+      bindBanActions(tbody);   // 复用解封事件
+
+      // 操作历史
+      const h = await api('/api/blacklist/history');
+      const htbody = $('history-rows');
+      htbody.innerHTML = '';
+      $('history-empty').classList.toggle('hidden', h.rows.length > 0);
+      h.rows.forEach(x => {
+        const isBan = x.action === 'ban';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="color:${isBan ? '#c62828' : '#2e7d32'};font-weight:600">${isBan ? '拉黑' : '解封'}</td>
+          <td>${esc(x.who)}</td>
+          <td class="ban-reason">${esc(x.reason || '-')}</td>
+          <td>${x.until ? esc(x.until) : (isBan ? '永久' : '-')}</td>
+          <td>${esc(x.operator)}</td>
+          <td>${esc(x.createdAt)}</td>`;
+        htbody.appendChild(tr);
+      });
+    }
+
+    $('bl-add').onclick = () => openBanModal('');
+
+    load();
   }
 
   // ---------------- 配置页 ----------------

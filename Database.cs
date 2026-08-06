@@ -86,6 +86,18 @@ public class Database
                 password_hash TEXT    NOT NULL,   -- PBKDF2: iterations.salt_b64.hash_b64
                 created_at    TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS blacklist_audit (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                action     TEXT    NOT NULL,      -- 'ban' | 'unban'
+                as_type    TEXT    NOT NULL,      -- 粒度: username（预留 clientid/peerhost）
+                who        TEXT    NOT NULL,      -- 呼号
+                reason     TEXT,                  -- 拉黑原因
+                until      TEXT,                  -- 到期 'yyyy-MM-dd HH:mm:ss'（NULL = 永久）
+                operator   TEXT    NOT NULL,      -- 操作管理员
+                created_at TEXT    NOT NULL       -- 操作时间 'yyyy-MM-dd HH:mm:ss'
+            );
+            CREATE INDEX IF NOT EXISTS idx_bl_who ON blacklist_audit(who, created_at);
             """;
         cmd.ExecuteNonQuery();
 
@@ -277,7 +289,8 @@ public class Database
                        SUM(send_msg + recv_msg) AS total_msg,
                        SUM(send_pkt + recv_pkt) AS total_pkt,
                        COUNT(DISTINCT clientid) AS device_count,
-                       SUM(reconnect)           AS reconnect_count
+                       SUM(reconnect)           AS reconnect_count,
+                       MAX(CASE WHEN username IS NOT NULL THEN 1 ELSE 0 END) AS has_username
                 FROM minute_stats
                 WHERE ts BETWEEN $from AND $to
                 GROUP BY name
@@ -300,6 +313,7 @@ public class Database
                     TotalPkt = r.IsDBNull(4) ? 0 : r.GetInt64(4),
                     DeviceCount = r.IsDBNull(5) ? 0 : r.GetInt64(5),
                     ReconnectCount = r.IsDBNull(6) ? 0 : r.GetInt64(6),
+                    IsAnonymous = r.IsDBNull(7) || r.GetInt64(7) == 0,
                 });
             }
             return list;
@@ -461,7 +475,8 @@ public class Database
                        MIN(uid)          AS uid,
                        SUM(msg_count) AS total_msg,
                        SUM(bytes)     AS total_bytes,
-                       COUNT(DISTINCT clientid) AS device_count
+                       COUNT(DISTINCT clientid) AS device_count,
+                       MAX(CASE WHEN username IS NOT NULL THEN 1 ELSE 0 END) AS has_username
                 FROM topic_stats
                 WHERE ts BETWEEN $from AND $to
                   AND (topic = $topic OR topic LIKE $topic || '/%')
@@ -484,6 +499,7 @@ public class Database
                     TotalMsg = r.IsDBNull(2) ? 0 : r.GetInt64(2),
                     TotalBytes = r.IsDBNull(3) ? 0 : r.GetInt64(3),
                     DeviceCount = r.IsDBNull(4) ? 0 : r.GetInt64(4),
+                    IsAnonymous = r.IsDBNull(5) || r.GetInt64(5) == 0,
                 });
             }
             return list;
@@ -639,6 +655,100 @@ public class Database
         }
     }
 
+    // ---------------- 黑名单审计 ----------------
+
+    /// <summary>追加一条黑名单操作流水（ban / unban）</summary>
+    public void AddBlacklistEvent(string action, string asType, string who, string? reason, string? until, string operatorName, DateTime at)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO blacklist_audit (action, as_type, who, reason, until, operator, created_at)
+                VALUES ($a, $t, $w, $r, $u, $o, $c)
+                """;
+            cmd.Parameters.AddWithValue("$a", action);
+            cmd.Parameters.AddWithValue("$t", asType);
+            cmd.Parameters.AddWithValue("$w", who);
+            cmd.Parameters.AddWithValue("$r", (object?)reason ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$u", (object?)until ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$o", operatorName);
+            cmd.Parameters.AddWithValue("$c", at.ToString("yyyy-MM-dd HH:mm:ss"));
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// 当前生效黑名单（本地推导）：每个呼号最新一条操作是 ban、未被解封、且未到期。
+    /// 纯本地推导 → 排行榜标记不依赖 EMQX 连通性；EMQX 侧 banned 列表才是权威执行。
+    /// </summary>
+    public List<BlacklistActiveRow> QueryActiveBlacklist(DateTime now)
+    {
+        var cutoff = now.ToString("yyyy-MM-dd HH:mm:ss");
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT who, reason, until, operator, created_at FROM (
+                    SELECT who, action, reason, until, operator, created_at,
+                           ROW_NUMBER() OVER (PARTITION BY who ORDER BY created_at DESC, id DESC) AS rn
+                    FROM blacklist_audit
+                ) WHERE rn = 1 AND action = 'ban' AND (until IS NULL OR until > $cutoff)
+                ORDER BY created_at DESC
+                """;
+            cmd.Parameters.AddWithValue("$cutoff", cutoff);
+            var list = new List<BlacklistActiveRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new BlacklistActiveRow
+                {
+                    Who = r.GetString(0),
+                    Reason = r.IsDBNull(1) ? null : r.GetString(1),
+                    Until = r.IsDBNull(2) ? null : r.GetString(2),
+                    Operator = r.GetString(3),
+                    CreatedAt = r.GetString(4),
+                });
+            }
+            return list;
+        }
+    }
+
+    /// <summary>黑名单全部操作流水（倒序）</summary>
+    public List<BlacklistHistoryRow> QueryBlacklistHistory(int limit = 200)
+    {
+        lock (_lock)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT action, as_type, who, reason, until, operator, created_at
+                FROM blacklist_audit
+                ORDER BY created_at DESC, id DESC
+                LIMIT $n
+                """;
+            cmd.Parameters.AddWithValue("$n", limit);
+            var list = new List<BlacklistHistoryRow>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new BlacklistHistoryRow
+                {
+                    Action = r.GetString(0),
+                    AsType = r.GetString(1),
+                    Who = r.GetString(2),
+                    Reason = r.IsDBNull(3) ? null : r.GetString(3),
+                    Until = r.IsDBNull(4) ? null : r.GetString(4),
+                    Operator = r.GetString(5),
+                    CreatedAt = r.GetString(6),
+                });
+            }
+            return list;
+        }
+    }
+
     // ---------------- 数据管理 ----------------
 
     /// <summary>统计各表行数</summary>
@@ -679,7 +789,7 @@ public class Database
         lock (_lock)
         {
             using var conn = Open();
-            foreach (var t in new[] { "minute_stats", "topic_stats", "health_snapshots", "settings", "admin_user" })
+            foreach (var t in new[] { "minute_stats", "topic_stats", "health_snapshots", "settings", "admin_user", "blacklist_audit" })
             {
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"DELETE FROM {t}";
@@ -752,6 +862,8 @@ public class TopicLeaderboardRow
     public long TotalMsg { get; init; }
     public long TotalBytes { get; init; }
     public long DeviceCount { get; init; }
+    /// <summary>true = 该行是匿名客户端（无 username，显示的是 clientid 兜底）</summary>
+    public bool IsAnonymous { get; init; }
 }
 
 /// <summary>主题统计明细行</summary>
@@ -809,6 +921,30 @@ public class LeaderboardRow
     public long TotalPkt { get; init; }
     public long DeviceCount { get; init; }
     public long ReconnectCount { get; init; }
+    /// <summary>true = 该行是匿名客户端（无 username，显示的是 clientid 兜底）</summary>
+    public bool IsAnonymous { get; init; }
+}
+
+/// <summary>黑名单当前生效行（本地推导）</summary>
+public class BlacklistActiveRow
+{
+    public string Who { get; init; } = "";
+    public string? Reason { get; init; }
+    public string? Until { get; init; }     // null = 永久
+    public string Operator { get; init; } = "";
+    public string CreatedAt { get; init; } = "";
+}
+
+/// <summary>黑名单操作流水行</summary>
+public class BlacklistHistoryRow
+{
+    public string Action { get; init; } = "";   // 'ban' | 'unban'
+    public string AsType { get; init; } = "";
+    public string Who { get; init; } = "";
+    public string? Reason { get; init; }
+    public string? Until { get; init; }
+    public string Operator { get; init; } = "";
+    public string CreatedAt { get; init; } = "";
 }
 
 /// <summary>呼号明细行</summary>
