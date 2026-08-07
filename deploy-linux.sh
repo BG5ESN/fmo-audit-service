@@ -9,10 +9,15 @@ D="${1:-/opt/emqx-monitor}"
 echo "== EMQX 审计监控工具部署 =="
 echo "安装目录: $D"
 
-# 1. 创建安装目录
+# 1. 创建安装目录 + 专用低权限用户（db 含 EMQX Secret，禁止 root 运行）
 sudo mkdir -p "$D"
+if ! id emqx-monitor >/dev/null 2>&1; then
+  sudo useradd --system --no-create-home --home-dir "$D" --shell /usr/sbin/nologin emqx-monitor
+fi
 sudo cp "$DIR/emqx-monitor-server" "$D/"
 [ -f "$DIR/emqx-monitor-server.service" ] && sudo cp "$DIR/emqx-monitor-server.service" "$D/"
+sudo chown -R emqx-monitor:emqx-monitor "$D"
+sudo chmod 600 "$D/emqx-monitor-server.db" 2>/dev/null || true
 
 # 2. 安装 systemd 服务（按实际路径调整）
 sudo sed -i "s|/opt/emqx-monitor|$D|g" "$D/emqx-monitor-server.service"

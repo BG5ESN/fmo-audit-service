@@ -40,6 +40,37 @@ systemctl status emqx-monitor-server
 
 **端口冲突**：改端口只需改 service 文件的 `EMQX_MONITOR_PORT`。
 
+**反代信任配置**：套反向代理（HTTPS）时需显式启用 trust_proxy，登录锁定才会按真实客户端 IP 计算（否则按反代 IP）：
+```
+# systemd 服务加一行：
+Environment=EMQX_MONITOR_TRUST_PROXY=1   # 或 settings 表 trust_proxy=1
+```
+⚠️ 启用前必须确认反代**覆盖** X-Forwarded-For 头为真实客户端 IP（Nginx 用 `proxy_set_header X-Forwarded-For $remote_addr;`，见下方示例）；直连模式（默认）下伪造 X-Forwarded-For 无效，登录锁定无法被绕过。
+
+**安全部署选项**（工具默认 HTTP，公网暴露方式由部署层自选）：
+- **A. 内网直连**：默认即可，信任局域网。
+- **B. 反代 HTTPS（推荐公网）**：Nginx/群晖反代 + 强制 HTTPS + 限流 + 可选 IP 白名单。示例：
+```nginx
+server {
+    listen 443 ssl;
+    server_name monitor.example.com;
+    ssl_certificate     /path/cert.pem;
+    ssl_certificate_key /path/key.pem;
+    location / {
+        proxy_pass http://127.0.0.1:9527;
+        proxy_set_header X-Forwarded-For $remote_addr;   # 必须覆盖（trust_proxy 前提）
+        proxy_set_header X-Forwarded-Proto $scheme;      # Secure Cookie 生效
+        proxy_set_header Host $host;
+    }
+}
+# 登录接口限流（防暴力破解，与工具内锁定叠加）：
+limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+location /api/login { limit_req zone=login burst=5; proxy_pass http://127.0.0.1:9527; }
+```
+- **C. VPN 访问（最稳）**：Tailscale/WireGuard 组网，公网不暴露任何端口。
+
+**数据安全**：db 文件含 EMQX API Secret / ingest token / 管理员哈希，请勿以 root 运行服务（模板默认 User=emqx-monitor + db 文件 600 权限）；定期备份用 `sqlite3 emqx-monitor-server.db ".backup /backup/xxx.db"`（WAL 模式下直接 cp 可能丢数据）。
+
 **HTTPS**（推荐，套反向代理）：
 ```nginx
 # 反代示例（Nginx，或群晖反代）

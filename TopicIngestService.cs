@@ -28,6 +28,26 @@ public class TopicIngestService : BackgroundService
     /// <summary>身份控制开关（默认启用=最高保护）：KICK 时自动拉黑连接身份；关闭后降级为仅记录</summary>
     public volatile bool IdentityControlEnabled = true;
 
+    // FAIL 事件落库限流：60 秒窗口最多 100 条（防攻击者用非法包刷库放大）
+    private int _failCount;
+    private DateTime _failWindowStart = DateTime.UtcNow;
+
+    /// <summary>FAIL 事件是否应限流（达到窗口上限返回 true，调用方跳过落库）</summary>
+    public bool FailThrottled()
+    {
+        lock (_lock)
+        {
+            if (DateTime.UtcNow - _failWindowStart > TimeSpan.FromSeconds(60))
+            {
+                _failWindowStart = DateTime.UtcNow;
+                _failCount = 0;
+            }
+            if (_failCount >= 100) return true;
+            _failCount++;
+            return false;
+        }
+    }
+
     /// <summary>重置内存状态（完全重置时调用）：清空聚合缓冲与计数</summary>
     public void Reset()
     {

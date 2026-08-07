@@ -27,6 +27,9 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory
 });
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+// 全局请求体上限 1MB：所有 POST 端点 body 都很小，防 ingest webhook 超大 body 内存炸弹（Kestrel 默认 30MB）
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(o =>
+    o.Limits.MaxRequestBodySize = 1_048_576);
 
 var db = new Database(dbPath);
 var emqx = new EmqxClient();
@@ -56,7 +59,17 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<CollectorService>(
 builder.Services.AddSingleton(topicIngest);
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TopicIngestService>());
 
-// Cookie 认证：24h 会话，HttpOnly
+// 反代场景（HTTPS 反代 → 内部 HTTP）：信任 X-Forwarded-Proto，让 Secure Cookie 在 HTTPS 下生效
+// 伪造 https 头只会影响自身 Cookie 的 Secure 标记，无实际危害
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    o.ForwardLimit = 2;
+});
+
+// Cookie 认证：24h 会话，HttpOnly + Secure（HTTPS 反代下防明文嗅探；HTTP 直连仍可用）
+// 注：SameSite 用默认 Lax——实测 Strict 会导致登录 Cookie 不下发（框架兼容问题），
+// 且 Lax + X-Frame-Options: DENY 已挡住跨站 POST 与点击劫持
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(o =>
     {
@@ -64,13 +77,23 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         o.ExpireTimeSpan = TimeSpan.FromHours(24);
         o.SlidingExpiration = false;
         o.Cookie.HttpOnly = true;
-        o.Cookie.SameSite = SameSiteMode.Lax;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
     });
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseAuthentication();
+
+// ---- 安全响应头：防点击劫持 / MIME 嗅探 / 外链泄露 Referrer ----
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
+    await next();
+});
 
 // ---- 认证门控：未初始化→/setup，未登录→/login，API 一律 401 ----
 app.Use(async (ctx, next) =>
@@ -144,12 +167,20 @@ var embeddedFs = new Microsoft.Extensions.FileProviders.EmbeddedFileProvider(
 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = embeddedFs });
 app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFs });
 
-// 客户端 IP（登录锁定用；反代后取 X-Forwarded-For）
-static string ClientIp(HttpContext ctx)
+// 客户端 IP（登录锁定用；反代场景需显式启用 trust_proxy 才信任 X-Forwarded-For）
+// 安全说明：默认直连模式用 TCP 对端 IP——客户端伪造 X-Forwarded-For 无法绕过登录锁定；
+// 启用 trust_proxy 后反代必须覆盖该头为真实客户端 IP（见 DEPLOY.md 安全部署选项）
+string ClientIp(HttpContext ctx)
 {
-    var fwd = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-    if (!string.IsNullOrEmpty(fwd))
-        return fwd.Split(',')[0].Trim();
+    // 环境变量（systemd 配 EMQX_MONITOR_TRUST_PROXY=1）或 settings 表 trust_proxy=1 均可启用
+    var trustProxy = Environment.GetEnvironmentVariable("EMQX_MONITOR_TRUST_PROXY") == "1"
+                     || db.GetSetting("trust_proxy") == "1";
+    if (trustProxy)
+    {
+        var fwd = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(fwd))
+            return fwd.Split(',')[0].Trim();
+    }
     return ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 }
 
@@ -186,7 +217,7 @@ app.MapPost("/api/login", async (LoginRequest req, HttpContext ctx) =>
     var claims = new[] { new Claim(ClaimTypes.Name, req.Username.Trim()) };
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
-    auth.ResetFailures(ClientIp(ctx));
+    auth.ResetFailures(req.Username.Trim(), ClientIp(ctx));
     return Results.Json(new { ok = true });
 });
 
@@ -296,7 +327,9 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
 {
     var token = db.GetSetting("ingest_token");
     var got = ctx.Request.Headers["X-Ingest-Token"].FirstOrDefault();
-    if (string.IsNullOrEmpty(token) || got != token)
+    if (string.IsNullOrEmpty(token) || got == null
+        || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(got), System.Text.Encoding.UTF8.GetBytes(token)))
         return Results.Json(new { ok = false, error = "invalid token" }, statusCode: 401);
     if (!ctx.Request.HasJsonContentType())
         return Results.Json(new { ok = false, error = "bad content type" }, statusCode: 400);
@@ -353,9 +386,12 @@ async Task RunIdentityAuditAsync(byte[]? raw, string? topic, string? connCallsig
 
     if (!parsed.Ok)
     {
-        // FAIL：非法包（长度/len 不符/超 MTU），降级仅记录，不处置
-        try { db.WriteAuditPacket(new AuditPacketRow { Ts = ts, Topic = topic ?? "", ClientId = clientid ?? "", Verdict = "FAIL", Len = raw.Length }); }
-        catch (Exception ex) { Console.Error.WriteLine($"[Audit] FAIL 落库失败: {ex.Message}"); }
+        // FAIL：非法包（长度/len 不符/超 MTU），降级仅记录，不处置；限流防刷库放大
+        if (!topicIngest.FailThrottled())
+        {
+            try { db.WriteAuditPacket(new AuditPacketRow { Ts = ts, Topic = topic ?? "", ClientId = clientid ?? "", Verdict = "FAIL", Len = raw.Length }); }
+            catch (Exception ex) { Console.Error.WriteLine($"[Audit] FAIL 落库失败: {ex.Message}"); }
+        }
         return;
     }
 
@@ -739,7 +775,13 @@ static (string From, string To, string? Error) ParseRange(string from, string to
     return (f.ToString("yyyy-MM-dd HH:mm:00"), t.ToString("yyyy-MM-dd HH:mm:00"), null);
 }
 
-static string Csv(string v) => v.Contains(',') || v.Contains('"') ? $"\"{v.Replace("\"", "\"\"")}\"" : v;
+static string Csv(string v)
+{
+    // CSV 公式注入防护：以 = + - @ \t \r 开头的值前缀 '（Excel 打开时不执行）
+    if (v.Length > 0 && (v[0] == '=' || v[0] == '+' || v[0] == '-' || v[0] == '@' || v[0] == '\t' || v[0] == '\r'))
+        v = "'" + v;
+    return v.Contains(',') || v.Contains('"') ? $"\"{v.Replace("\"", "\"\"")}\"" : v;
+}
 
 app.Run();
 
