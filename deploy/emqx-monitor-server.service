@@ -1,5 +1,5 @@
 [Unit]
-Description=EMQX Monitor Server (审计监控)
+Description=FMO 审计工具 (审计监控)
 After=network.target
 
 [Service]

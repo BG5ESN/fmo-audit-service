@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>说明 - FMO审计工具</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-title">FMO审计工具</span>
+  <nav class="topbar-nav">
+    <a href="/">排行榜</a>
+    <a href="/topics.html">主题统计</a>
+    <a href="/online.html">在线</a>
+    <a href="/audit.html">身份审计</a>
+    <a href="/blacklist.html">黑名单</a>
+    <a href="/health.html">健康</a>
+    <a href="/settings.html">配置</a>
+    <a href="/help.html" class="active">说明</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="collect-status"></span>
+    <a id="logout">退出登录</a>
+  </div>
+</div>
+
+<div class="chart-box" style="max-width:860px;padding-bottom:24px">
+  <div class="config-section" style="margin-top:16px">
+    <div class="config-section-title">为什么有 FMO 4.0</div>
+    <div class="config-section-body" style="line-height:1.9;font-size:13px;color:#333">
+      <p style="margin-bottom:10px">FMO 4.0 的目标只有一句话：<b>让"身份可信"和"网络开放"同时成立</b>。</p>
+      <p style="margin-bottom:10px">传统网络对讲用"中心平台 + 账号密码"解决问题——身份由平台认定，一切通信过中心。这套设计在商业场景是正确取舍，但放在业余无线电上有根本性错位：<b>呼号是考试授予、受国际承认、终身绑定的法定身份</b>，账号密码只是一张可批量生成、随时回收的商业凭证；而业余无线电的中继与网关天然分布式，"去中心化"刻在骨子里。</p>
+      <p>FMO 4.0 用<b>三层 PKI 信任链</b>（Root CA → 中间机构 → 用户证书）把"这个呼号确实经过核验"变成一份<b>任何设备都能独立数学验证的数字证明</b>。每个边缘台站自己携带可验证的呼号身份——不再依赖中心告诉你"谁是谁"。这就是 FMO 与传统网络对讲的分水岭：<b>先有台站、先有呼号，再自然形成通联</b>，服务器不是房间，而是临时频点。</p>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">为什么还需要审计工具</div>
+    <div class="config-section-body" style="line-height:1.9;font-size:13px;color:#333">
+      <p style="margin-bottom:10px">4.0 的证书体系解决的是<b>认证层</b>：连接时"你是谁"可以被验证。但认证可信 ≠ 数据可信——<b>数据包里的包头是明文声明，不带签名</b>（音频流无法逐包签名，带宽不允许）。</p>
+      <p style="margin-bottom:10px">这就留下一个攻击面：攻击者用自己的合法身份连上服务器，然后在数据包包头里<b>写入别人的呼号/UID</b>——冒充他人广播。认证层对此无能为力，因为连接身份本身是合法的。</p>
+      <p style="margin-bottom:10px">FMO 4.0 把<b>认证</b>（技术：证书链可验证）与<b>责任</b>（治理：行为归属具体个人）分为两个独立维度。审计工具就是责任维度的执行者：<b>逐包比对"包头声明身份"与"连接身份"（认证服务端写入）</b>，把"身份不可伪造"从协议层落实到执行层。</p>
+      <p>因此审计工具默认启用<b>身份控制（最高保护）</b>：包头与连接身份不一致 = 伪造，<b>立即自动拉黑该连接身份</b>（踢下线 + 禁连 + 留痕）。开放网络里攻击成本趋近于零，默认最高保护是唯一正确的选择。</p>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">工具做什么</div>
+    <div class="config-section-body" style="line-height:1.9;font-size:13px;color:#333">
+      <div class="kv"><b>排行榜</b>：按呼号聚合历史流量（字节/消息/包数），点击展开 clientid 明细，反查某时段谁发的多</div>
+      <div class="kv"><b>主题统计</b>：FMO/RAW 发包时间轴（10 秒粒度），hover 查看每桶 Top 呼号，配合投诉时间点定位干扰源</div>
+      <div class="kv"><b>在线列表</b>：实时查看当前在线客户端（呼号/clientid/IP/连接时长），每 60 秒刷新</div>
+      <div class="kv"><b>身份审计</b>：包头解析结果——KICK（身份不符）/ WARN（未知身份）/ FAIL（非法包），含处置记录</div>
+      <div class="kv"><b>黑名单</b>：拉黑/解封/到期时间/操作留痕（谁、何时、原因），身份控制自动拉黑标记 operator=身份控制</div>
+      <div class="kv"><b>健康</b>：服务器资源 + EMQX 节点状态</div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">管理员操作说明</div>
+    <div class="config-section-body" style="line-height:1.9;font-size:13px;color:#333">
+      <div class="kv"><b>拉黑</b>：排行榜 / 主题统计 / 在线列表 → 呼号行「拉黑」→ 原因 + 时长（永久或临时，到期自动解除）。立即踢下线并禁止重连</div>
+      <div class="kv"><b>解封</b>：黑名单页 → 「解封」。误伤有后悔药，留痕可追溯</div>
+      <div class="kv"><b>身份控制开关</b>（设置页）：默认启用。关闭 = 允许伪造包通过（仅记录不处置）——这是管理员自行选择，关闭后网络身份不可信，风险自负</div>
+      <div class="kv"><b>审计事件解读</b>：KICK 身份不符 = 伪造（自动拉黑）；WARN 未知身份 = 匿名连接无法比对（仅记录）；FAIL 非法包 = 包头不合法（长度/len 字段不符，仅记录）</div>
+      <div class="kv"><b>数据</b>：保留 30 天自动清理；备份直接复制 db 文件；清空/重置在配置页</div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <div class="config-section-title">技术说明</div>
+    <div class="config-section-body" style="line-height:1.9;font-size:13px;color:#999">
+      <div class="kv">数据精度：主题统计 10 秒 / 呼号统计 1 分钟 / 在线列表 60 秒采集</div>
+      <div class="kv">包头审计：FMO/RAW payload 前 64 字节（version/flags/UID/callsign/len/frameNum/checkSum/smeter/srvUID），包头明文不加密——包头是声明，连接身份是真相</div>
+      <div class="kv">CRC 由设备端核验，审计侧仅展示参考，不据此判定</div>
+      <div class="kv">数据按服务器本地时间存储，请确保服务器时区为 Asia/Shanghai</div>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
