@@ -462,6 +462,7 @@
     }
 
     query();
+    ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
   }
