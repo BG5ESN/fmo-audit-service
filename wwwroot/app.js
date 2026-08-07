@@ -883,6 +883,7 @@
     }
 
     load();
+    ensureWizard();
     setInterval(() => {
       if (document.hidden) return;
       if (!$('auto-refresh') || !$('auto-refresh').checked) return;
@@ -980,6 +981,7 @@
     }
 
     query();
+    ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
     setInterval(() => {
@@ -1049,6 +1051,15 @@
     $('bl-add').onclick = () => openBanModal('');
 
     load();
+    ensureWizard();
+  }
+
+  // ---------------- 说明页 ----------------
+
+  if (page === '/help.html') {
+    ensureWizard();
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
   }
 
   // ---------------- 配置页 ----------------
