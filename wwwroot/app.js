@@ -1293,7 +1293,7 @@
         const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
         if (d.ok) {
           // 立即启用（不阻塞）；配置报告展示异常
-          const hasIssue = !!(d.pending || d.failed || (d.status && !d.status.Ok));
+          const hasIssue = !!(d.pending || d.failed || (d.status && !d.status.ok));
           msg.className = hasIssue ? 'form-msg err' : 'form-msg ok';
           $('topic-status').textContent = hasIssue ? '已启用（配置有异常）' : '已启用';
           $('topic-status').style.color = hasIssue ? '#e65100' : '#2e7d32';
