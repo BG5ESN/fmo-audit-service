@@ -1201,16 +1201,33 @@
     };
 
     // ---- 主题统计 ----
-    const showTopicPending = d => {
+    const showTopicReport = d => {
       const row = $('topic-pending-row');
+      let html = '';
       if (d.pending) {
+        html += `⚠️ 以下步骤响应超时（集群同步慢，资源可能已创建成功）：<b>${esc(d.pending)}</b><br>`;
+      }
+      if (d.failed) {
+        html += `❌ 以下步骤配置失败（主题统计仍已启用，数据照常接收）：<b>${esc(d.failed)}</b><br>`;
+      }
+      if (html) {
         row.style.display = '';
-        row.innerHTML = `⚠️ 配置完成但以下步骤响应超时（集群同步慢，资源可能已创建成功）：<b>${esc(d.pending)}</b><br>` +
-          `请点击「测试连接」由工具验证，或到 <b>EMQX Dashboard → 集成 → 连接器/规则</b> 查看真实状态。`;
+        row.innerHTML = html + `请点击「测试连接」验证实际状态，或到 <b>EMQX Dashboard → 集成 → 连接器/规则</b> 查看。`;
       } else {
         row.style.display = 'none';
         row.innerHTML = '';
       }
+    };
+    // 配置报告：每步实际状态（EMQX 侧查询为准）
+    const renderStatusReport = (s, container) => {
+      const conn = s.connector, mid = s.middleware, rule = s.rule;
+      const line = (ok, txt) => `<div>${ok ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">❌</span>'} ${txt}</div>`;
+      let html = '';
+      html += line(conn.exists, `连接器 emqx-monitor-ingest：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
+      html += line(mid.exists, `${s.v6 ? '动作' : '桥接'} ${s.v6 ? 'emqx-monitor-ingest-action' : 'emqx-monitor-bridge'}：${mid.exists ? '存在' : '不存在'}`);
+      html += line(rule.exists && rule.enabled, `规则 emqx-monitor-topic-rule：${rule.exists ? (rule.enabled ? '存在且已启用' : '存在但未启用') : '不存在'}`);
+      html += `<div style="margin-top:6px;color:${s.ok ? '#2e7d32' : '#e65100'};font-weight:600">${s.ok ? '✅ 链路正常' : '❌ 链路不完整'}</div>`;
+      container.innerHTML = html;
     };
     (async () => {
       try {
@@ -1218,7 +1235,7 @@
         $('topic-name').value = d.topic;
         $('topic-webhook-url').value = d.webhook_url || d.ingest_url;
         $('topic-webhook').textContent = d.webhook_url || d.ingest_url;
-        showTopicPending(d);
+        showTopicReport(d);
         // 本机 IP 快速选择按钮（Linux 多网卡多 IP 场景）
         const pick = $('ip-quick-pick');
         if (pick && d.local_ips && d.local_ips.length) {
@@ -1275,15 +1292,22 @@
       try {
         const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
         if (d.ok) {
-          msg.className = 'form-msg ok';
-          $('topic-status').textContent = d.pending ? '已启用（部分步骤待确认）' : '已启用';
-          $('topic-status').style.color = d.pending ? '#e65100' : '#2e7d32';
+          // 立即启用（不阻塞）；配置报告展示异常
+          const hasIssue = !!(d.pending || d.failed || (d.status && !d.status.Ok));
+          msg.className = hasIssue ? 'form-msg err' : 'form-msg ok';
+          $('topic-status').textContent = hasIssue ? '已启用（配置有异常）' : '已启用';
+          $('topic-status').style.color = hasIssue ? '#e65100' : '#2e7d32';
           $('topic-webhook').textContent = d.webhook_url;
           $('topic-webhook-url').value = d.webhook_url;
-          showTopicPending(d);
-          if (d.pending) {
-            msg.className = 'form-msg err';
-            msg.textContent = '配置完成，但部分步骤超时待确认（不阻塞统计）。请点击「测试连接」确认。';
+          showTopicReport(d);
+          // 实际状态报告（EMQX 侧查询为准）
+          if (d.status) {
+            const res = $('topic-test-result');
+            res.style.display = '';
+            renderStatusReport(d.status, res);
+          }
+          if (hasIssue) {
+            msg.textContent = d.hint || '主题统计已启用（数据照常接收），但配置存在异常——详见下方报告，修复后可重新启用或点「测试连接」。';
           } else {
             msg.textContent = `已启用，统计主题 ${d.topic} /#（1 分钟后出数据）`;
           }
@@ -1300,7 +1324,7 @@
         msg.textContent = '已停用，规则引擎已从 EMQX 移除';
         $('topic-status').textContent = '未启用';
         $('topic-status').style.color = '#999';
-        showTopicPending({});
+        showTopicReport({});
       } else msg.textContent = d.error || '停用失败';
     };
 
@@ -1330,7 +1354,7 @@
         // 测试通过后刷新状态显示（清除待确认）
         if (s.ok) {
           const c = await api('/api/topic-config');
-          showTopicPending(c);
+          showTopicReport(c);
           if (c.enabled) { $('topic-status').textContent = '已启用'; $('topic-status').style.color = '#2e7d32'; }
         }
       } catch (e) { /* 401 */ }

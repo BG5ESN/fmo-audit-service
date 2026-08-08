@@ -506,6 +506,7 @@ app.MapGet("/api/topic-config", () => Results.Json(new
     last_ingest_at = topicIngest.LastIngestAt == default ? null : topicIngest.LastIngestAt.ToString("yyyy-MM-dd HH:mm:ss"),
     ingest_token = topicIngest.GetToken(db),
     pending = db.GetSetting("topic_pending"),   // 非空 = 有步骤超时待确认（集群场景）
+    failed = db.GetSetting("topic_failed"),     // 非空 = 有步骤失败（尽力配置报告）
 }));
 
 // POST /api/topic-config — 启用/停用主题统计（自动配置 EMQX 规则引擎）
@@ -518,24 +519,35 @@ app.MapPost("/api/topic-config", async (TopicConfigRequest req) =>
             return Results.Json(new { ok = false, error = "请先在 EMQX 连接配置中保存连接" });
         var webhookUrl = string.IsNullOrWhiteSpace(req.WebhookUrl) ? $"http://{GetLanIp()}:{port}/api/ingest" : req.WebhookUrl.Trim().TrimEnd('/');
         var token = topicIngest.GetToken(db);
-        var (err, pending) = await emqx.SetupTopicRuleAsync(webhookUrl, token, topic);
-        if (err != null)
-            return Results.Json(new { ok = false, error = err });
+        // 尽力配置：失败不中断，统一报告；集群下请求状态不可靠，报告以实际查询为准
+        var (err, pending, failed) = await emqx.SetupTopicRuleAsync(webhookUrl, token, topic);
+        // 立即启用：不阻塞——EMQX 规则引擎一旦生效即主动上报，配置报告只是信息
         db.SetSetting("topic_enabled", "1");
         db.SetSetting("topic_name", topic);
         db.SetSetting("topic_webhook_url", webhookUrl);
         db.SetSetting("topic_pending", pending ?? "");
-        if (pending != null)
-            return Results.Json(new
+        db.SetSetting("topic_failed", failed ?? "");
+        // 实际状态（EMQX 侧真实查询，权威）
+        var status = await emqx.GetTopicRuleStatusAsync();
+        if (status.Ok) { db.SetSetting("topic_pending", ""); db.SetSetting("topic_failed", ""); }
+        return Results.Json(new
+        {
+            ok = true,
+            enabled = true,   // 立即启用（配置报告不阻塞）
+            topic,
+            webhook_url = webhookUrl,
+            pending,
+            failed,
+            status = new
             {
-                ok = true,
-                topic,
-                webhook_url = webhookUrl,
-                pending,
-                // 集群常见：操作实际成功但响应超时——给用户明确指引，不阻塞后续
-                hint = "以下步骤响应超时但可能已创建成功，请点击「测试连接」确认，或到 EMQX Dashboard → 集成 → 连接器/规则 查看真实状态",
-            });
-        return Results.Json(new { ok = true, topic, webhook_url = webhookUrl });
+                status.Ok,
+                connector = new { exists = status.ConnectorExists, state = status.ConnectorStatus, reason = status.ConnectorReason },
+                middleware = new { exists = status.MiddlewareExists, kind = status.V6 ? "action" : "bridge" },
+                rule = new { exists = status.RuleExists, enabled = status.RuleEnabled },
+            },
+            hint = status.Ok ? null
+                : "主题统计已启用（数据照常接收）。配置存在异常，请到 EMQX Dashboard → 集成 → 连接器/规则 查看，或修复后重新启用/点「测试连接」。",
+        });
     }
     else
     {
@@ -544,6 +556,7 @@ app.MapPost("/api/topic-config", async (TopicConfigRequest req) =>
             return Results.Json(new { ok = false, error = err });
         db.SetSetting("topic_enabled", "0");
         db.SetSetting("topic_pending", "");
+        db.SetSetting("topic_failed", "");
         return Results.Json(new { ok = true });
     }
 });
