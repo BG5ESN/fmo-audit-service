@@ -25,7 +25,7 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 
 ### Windows
 
-推荐使用官方安装脚本（自动下载最新版并可选注册 NSSM 服务）：
+推荐使用官方安装脚本（自动下载最新版，注册计划任务开机自启）：
 
 ```powershell
 irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\fas-install.ps1"; iex (Get-Content "$env:TEMP\fas-install.ps1" -Raw -Encoding UTF8)
@@ -34,17 +34,19 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 安装内容：
 - 二进制 → `%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.exe`
 - 数据库 → `%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.db`（由 `EMQX_MONITOR_DB` 显式指定）
-- 系统服务 → 可选注册 NSSM 服务 `fmo-fas`（需已安装 NSSM，否则手动运行）
+- 系统任务 → 计划任务 `fmo-fas`（Windows 内置，零依赖；`AtStartup` 开机自启 + 崩溃自动重启）
 
-手动注册 NSSM（等价于安装脚本的行为）：
+计划任务管理（管理员 PowerShell）：
 
-```bat
-nssm install fmo-fas "%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.exe"
-nssm set fmo-fas AppDirectory %LOCALAPPDATA%\FMOAuditService
-nssm set fmo-fas AppEnvironmentExtra EMQX_MONITOR_DB=%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.db
-nssm set fmo-fas Start SERVICE_AUTO_START
-nssm start fmo-fas
-```
+|项目| 说明/指令|
+|---|---|
+|日志| Get-Content -Wait "$env:LOCALAPPDATA\FMOAuditService\fas.log"|
+|启动| Start-ScheduledTask -TaskName fmo-fas|
+|停止| Stop-ScheduledTask -TaskName fmo-fas|
+|重启| Stop-ScheduledTask fmo-fas; Start-ScheduledTask fmo-fas|
+|升级| Stop-ScheduledTask fmo-fas; & "$env:LOCALAPPDATA\FMOAuditService\fmo-audit-service.exe" --update; Start-ScheduledTask fmo-fas|
+|卸载| irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 -OutFile "$env:TEMP\fas-uninstall.ps1"; iex (Get-Content "$env:TEMP\fas-uninstall.ps1" -Raw -Encoding UTF8) |
+|安装目录|%LOCALAPPDATA%\FMOAuditService\|
 
 Windows 防火墙放行 9527 端口。
 
@@ -60,7 +62,7 @@ Windows 防火墙放行 9527 端口。
 
 | 方式 | 操作 |
 |---|---|
-| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验；Linux systemd 自动重启，Windows NSSM 需手动 `nssm restart fmo-fas`） |
+| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验；Linux systemd 自动重启，Windows 计划任务需手动 `Start-ScheduledTask fmo-fas`） |
 | 命令行 | Linux: `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
 
 更新安全性：下载走 HTTPS（传输完整性由 TLS 保障），来源为官方 bg5esn.com。

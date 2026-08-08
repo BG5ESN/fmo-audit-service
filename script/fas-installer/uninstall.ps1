@@ -1,32 +1,49 @@
 ﻿# ============================================================
-# FMO Audit Service (FAS) 鈥?Windows 鍗歌浇鑴氭湰 (PowerShell)
-# 鐢ㄦ硶: irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 | iex
-# 璇存槑: 鍋滄骞跺垹闄?NSSM 鏈嶅姟 fmo-fas + 娈嬬暀杩涚▼ + 鍒犻櫎瀹夎鐩綍锛堝惈鍏ㄩ儴鏁版嵁锛夛紝
-#       鎵ц鍗歌浇鍗崇敤鎴锋槑纭剰鎰匡紝鐩存帴褰诲簳鍒犻櫎锛堝榻?Linux uninstall.sh锛?
+# FMO Audit Service (FAS) — Windows 卸载脚本 (PowerShell)
+# 用法: irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 -OutFile "$env:TEMP\fas-uninstall.ps1"; iex (Get-Content "$env:TEMP\fas-uninstall.ps1" -Raw -Encoding UTF8)
+# 说明: 停止并删除计划任务 fmo-fas + 残留进程 + 删除安装目录（含全部数据），
+#       执行卸载即用户明确意愿，直接彻底删除（对齐 Linux uninstall.sh）
 # ============================================================
 $ErrorActionPreference = "Stop"
 
-$InstallDir = Join-Path $env:LOCALAPPDATA "FMOAuditService"
-$SvcName = "fmo-fas"
+Write-Host ""
+Write-Host "=== FMO Audit Service 卸载 ===" -ForegroundColor Cyan
+Write-Host ""
 
-Write-Host "=== FMO Audit Service 鍗歌浇 ===" -ForegroundColor Cyan
-
-# 鍋滄骞跺垹闄?NSSM 鏈嶅姟锛堣嫢瀛樺湪锛?
-$svc = Get-Service $SvcName -ErrorAction SilentlyContinue
-if ($svc) {
-    & nssm stop $SvcName 2>$null | Out-Null
-    Start-Sleep 2
-    & nssm remove $SvcName confirm 2>$null | Out-Null
-    Write-Host "宸茬Щ闄?NSSM 鏈嶅姟 $SvcName" -ForegroundColor Green
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "[!] 请以管理员身份运行 PowerShell" -ForegroundColor Red
+    Write-Host "    右键 PowerShell -> 以管理员身份运行，然后执行:"
+    Write-Host '    irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 -OutFile "$env:TEMP\fas-uninstall.ps1"; iex (Get-Content "$env:TEMP\fas-uninstall.ps1" -Raw -Encoding UTF8)'
+    exit 1
 }
 
-# 娓呯悊娈嬬暀杩涚▼
+$SvcName = "fmo-fas"
+$InstallDir = Join-Path $env:LOCALAPPDATA "FMOAuditService"
+
+# 停止并删除计划任务
+Write-Host "[1/2] 停止并移除计划任务..."
+$task = Get-ScheduledTask -TaskName $SvcName -ErrorAction SilentlyContinue
+if ($task) {
+    Stop-ScheduledTask -TaskName $SvcName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $SvcName -Confirm:$false
+    Write-Host "      完成" -ForegroundColor Green
+} else {
+    Write-Host "      未找到计划任务 (已跳过)" -ForegroundColor Green
+}
+
+# 清理残留进程
 Get-Process fmo-audit-service -ErrorAction SilentlyContinue | Stop-Process -Force
 
-# 鍒犻櫎瀹夎鐩綍锛堝惈鏁版嵁搴擄級
+# 删除安装目录（含全部数据）
+Write-Host "[2/2] 删除程序和配置..."
 if (Test-Path $InstallDir) {
-    Remove-Item $InstallDir -Recurse -Force
-    Write-Host "宸插垹闄?$InstallDir" -ForegroundColor Green
+    Remove-Item -Recurse -Force $InstallDir
+    Write-Host "      已删除: $InstallDir" -ForegroundColor Green
+} else {
+    Write-Host "      目录不存在 (已跳过)" -ForegroundColor Green
 }
 
-Write-Host "鍗歌浇瀹屾垚" -ForegroundColor Green
+Write-Host ""
+Write-Host "=== FMO Audit Service 已完全卸载 ===" -ForegroundColor Green
+Write-Host ""
