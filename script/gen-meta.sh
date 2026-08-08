@@ -1,22 +1,76 @@
 #!/bin/bash
 # ============================================================
 # FMO Audit Service — OTA 元数据生成工具（对齐 SAS sas.json 格式）
-# 用法: bash script/gen-meta.sh [版本] [基础URL] [发布说明]
-#   版本默认取 git 最近 tag（如 v2.0.8）
-#   基础URL 默认 https://bg5esn.com/share/fmo/fmo-audit-service/
-#   发布说明可选（如 "BUG FIX."），写入 notes 字段
+# 用法:
+#   bash script/gen-meta.sh [版本] [基础URL] [发布说明]   # 非交互（脚本化）
+#   bash script/gen-meta.sh                               # 交互模式（终端下逐项询问）
+#   bash script/gen-meta.sh -h | --help                   # 帮助
+# 版本默认取 git 最近 tag（如 v2.0.8）
+# 基础URL 默认 https://bg5esn.com/share/fmo/fmo-audit-service/
+# 发布说明可选（如 "BUG FIX."），写入 notes 字段
 # 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz|.zip 产物（固定名），
-# 生成 fmo-audit-service.json —— URL 带版本目录，与 SAS 同风格
+# 生成 fas.json —— URL 带版本目录，与 SAS 同风格
 # 上传: 产物 → <基础URL>/v<版本>/，元数据 → <基础URL>/
 # ============================================================
 set -e
 cd "$(dirname "$0")/.."
 
-VER="${1:-$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo 0.0.0)}"
-BASE="${2:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
-NOTES="${3:-}"
+show_help() {
+  cat <<'EOF'
+FMO Audit Service - OTA 元数据生成工具
+
+用法:
+  bash script/gen-meta.sh [版本] [基础URL] [发布说明]   非交互（脚本化）
+  bash script/gen-meta.sh                               交互模式（终端下逐项询问）
+  bash script/gen-meta.sh -h | --help                   显示本帮助
+
+参数:
+  版本      默认取 git 最近 tag（如 2.0.8），无 tag 则 0.0.0
+  基础URL   默认 https://bg5esn.com/share/fmo/fmo-audit-service/
+  发布说明  可选（如 "BUG FIX."），写入 notes 字段
+
+示例:
+  bash script/gen-meta.sh
+  bash script/gen-meta.sh 2.0.13 "BUG FIX."
+  bash script/gen-meta.sh 2.0.13 https://example.com/share/ "修复xxx"
+
+说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fmo-audit-service.json；
+      上传: 产物 → <基础URL>/v<版本>/，元数据 → <基础URL>/ (覆盖)
+EOF
+}
+
+# ---- 帮助 ----
+for a in "$@"; do
+  case "$a" in
+    -h|--help|help) show_help; exit 0 ;;
+  esac
+done
+
+# ---- 默认版本（git 最近 tag）----
+DEFAULT_VER="$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo 0.0.0)"
+
+# ---- 参数解析：无参数 + 终端 → 交互模式；无参数 + 非终端 → 拒绝（防后台卡死）----
+if [ $# -eq 0 ]; then
+  if [ -t 0 ]; then
+    echo "== FMO Audit Service 元数据生成（交互模式）=="
+    read -rp "版本号 [${DEFAULT_VER}]: " VER
+    VER="${VER:-$DEFAULT_VER}"
+    read -rp "基础 URL [https://bg5esn.com/share/fmo/fmo-audit-service/]: " BASE
+    BASE="${BASE:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
+    read -rp "发布说明（可选，直接回车跳过）: " NOTES
+  else
+    echo "[!] 交互模式需要终端。非交互请传参: bash script/gen-meta.sh [版本] [基础URL] [发布说明]" >&2
+    echo "    帮助: bash script/gen-meta.sh -h" >&2
+    exit 1
+  fi
+else
+  VER="${1:-$DEFAULT_VER}"
+  BASE="${2:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
+  NOTES="${3:-}"
+fi
+
 DIST="dist"
-OUT="fmo-audit-service.json"
+OUT="fas.json"
 
 echo "== FMO Audit Service 元数据生成 v$VER =="
 echo "基础 URL: $BASE"
@@ -61,4 +115,4 @@ cat "$OUT"
 echo ""
 echo "上传步骤:"
 echo "  1. 产物 → ${BASE}v${VER}/"
-echo "  2. 元数据 → ${BASE}fmo-audit-service.json（覆盖）"
+echo "  2. 元数据 → ${BASE}fas.json（覆盖）"

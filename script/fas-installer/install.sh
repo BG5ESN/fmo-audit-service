@@ -8,7 +8,7 @@
 # ============================================================
 set -e
 
-META_URL="https://bg5esn.com/share/fmo/fmo-audit-service.json"
+META_URL="https://bg5esn.com/share/fmo/fas.json"
 SCRIPT_VERSION="1.0.0"
 INSTALL_DIR="/opt/fmo-fas"
 SERVICE_NAME="fmo-fas"

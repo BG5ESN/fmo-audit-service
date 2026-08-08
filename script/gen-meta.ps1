@@ -3,7 +3,7 @@
   FMO Audit Service — OTA 元数据生成工具（PowerShell 版，对齐 gen-meta.sh）
 .DESCRIPTION
   扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz|.zip 产物（固定名，对齐 SAS），
-  生成 fmo-audit-service.json —— URL 带版本目录，与 SAS 同风格。
+  生成 fas.json —— URL 带版本目录，与 SAS 同风格。
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +32,7 @@ FMO Audit Service - OTA 元数据生成工具 (PowerShell 版)
   powershell -File script/gen-meta.ps1 -Version 2.0.12 -Notes "BUG FIX."
 
 说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fmo-audit-service.json；
-      上传: 产物 -> <基础URL>/v<版本>/，元数据 -> <基础URL>/ (覆盖)
+      上传: 产物 -> <基础URL>/v<版本>/，元数据 -> <基础URL>/fas.json (覆盖)
 "@
     exit 0
 }
@@ -49,7 +49,7 @@ if (-not $Version) {
 $BaseUrl = $BaseUrl.TrimEnd('/') + '/'   # 保证尾斜杠，URL 拼接不出双斜杠
 
 $DIST = 'dist'
-$OUT  = 'fmo-audit-service.json'
+$OUT  = 'fas.json'
 
 Write-Host "== FMO Audit Service 元数据生成 v$Version =="
 Write-Host "基础 URL: $BaseUrl"
@@ -92,4 +92,4 @@ Get-Content $OUT
 Write-Host ""
 Write-Host "上传步骤:"
 Write-Host "  1. 产物 → ${BaseUrl}v${Version}/"
-Write-Host "  2. 元数据 → ${BaseUrl}fmo-audit-service.json（覆盖）"
+Write-Host "  2. 元数据 → ${BaseUrl}fas.json（覆盖）"

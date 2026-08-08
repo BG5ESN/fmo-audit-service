@@ -7,7 +7,7 @@
 # ============================================================
 $ErrorActionPreference = "Stop"
 
-$MetaUrl = "https://bg5esn.com/share/fmo/fmo-audit-service.json"
+$MetaUrl = "https://bg5esn.com/share/fmo/fas.json"
 $InstallDir = Join-Path $env:LOCALAPPDATA "FMOAuditService"
 $Rid = "win-x64"
 

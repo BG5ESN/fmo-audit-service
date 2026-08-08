@@ -7,13 +7,13 @@ namespace EmqxMonitor;
 public enum UpdateMode { Self, Docker, Manual }
 
 /// <summary>OTA 更新服务：版本元数据 / 下载校验 / 延迟替换二进制。
-/// 元数据地址与 sas.json 同目录：https://bg5esn.com/share/fmo/fmo-audit-service.json
+/// 元数据地址与 sas.json 同目录：https://bg5esn.com/share/fmo/fas.json
 /// { "version": "2.0.0", "assets": { "linux-x64": { "url": "...", "sha256": "..." }, ... } }</summary>
 public static class UpdateService
 {
     /// <summary>元数据地址（可用环境变量 FAS_UPDATE_URL 覆盖——测试/自托管场景）</summary>
     public static string MetaUrl =>
-        Environment.GetEnvironmentVariable("FAS_UPDATE_URL") ?? "https://bg5esn.com/share/fmo/fmo-audit-service.json";
+        Environment.GetEnvironmentVariable("FAS_UPDATE_URL") ?? "https://bg5esn.com/share/fmo/fas.json";
 
     /// <summary>当前运行模式：Docker 容器内 → 不自更新（提示 docker pull）</summary>
     public static UpdateMode DetectMode()
