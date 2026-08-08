@@ -7,7 +7,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '',          # 版本号，默认取 git 最近 tag（如 2.0.8），无 tag 则 0.0.0
+    [string]$Version = '',          # 版本号，默认取 git 最近 tag（发布版本 = tag，与 build-all 一致；无 tag 拒绝）
     [string]$BaseUrl = 'https://bg5esn.com/share/fmo/fmo-audit-service/',   # 产物/元数据基础 URL
     [string]$Notes = '',            # 发布说明（可选），写入元数据 notes 字段
     [switch]$Help                   # 显示帮助
@@ -40,11 +40,14 @@ FMO Audit Service - OTA 元数据生成工具 (PowerShell 版)
 # ── 切到项目根（脚本位于 script/ 下）──
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# ── 版本：显式参数优先，否则取 git 最近 tag ──
+# ── 版本：显式参数优先，否则取 git 最近 tag（--abbrev=0 只取 tag 名，不带脏后缀）──
 if (-not $Version) {
-    $tag = & git describe --tags --always 2>$null
-    if ($LASTEXITCODE -eq 0 -and $tag) { $Version = $tag -replace '^v', '' }
-    if (-not $Version) { $Version = '0.0.0' }
+    $tag = & git describe --tags --abbrev=0 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $tag) {
+        Write-Host "[!] 未找到 git tag，请先打 tag（发布版本必须可追溯，与 build-all 一致）: git tag v<版本>" -ForegroundColor Red
+        exit 1
+    }
+    $Version = $tag -replace '^v', ''
 }
 $BaseUrl = $BaseUrl.TrimEnd('/') + '/'   # 保证尾斜杠，URL 拼接不出双斜杠
 

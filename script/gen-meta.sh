@@ -5,7 +5,7 @@
 #   bash script/gen-meta.sh [版本] [基础URL] [发布说明]   # 非交互（脚本化）
 #   bash script/gen-meta.sh                               # 交互模式（终端下逐项询问）
 #   bash script/gen-meta.sh -h | --help                   # 帮助
-# 版本默认取 git 最近 tag（如 v2.0.8）
+# 版本直接取 git 最近 tag（发布版本 = tag，与 build-all 一致；无 tag 拒绝生成）
 # 基础URL 默认 https://bg5esn.com/share/fmo/fmo-audit-service/
 # 发布说明可选（如 "BUG FIX."），写入 notes 字段
 # 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz|.zip 产物（固定名），
@@ -46,15 +46,19 @@ for a in "$@"; do
   esac
 done
 
-# ---- 默认版本（git 最近 tag）----
-DEFAULT_VER="$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo 0.0.0)"
+# ---- 版本：取最近 git tag（--abbrev=0 只取 tag 名，不带提交数/哈希脏后缀）----
+DEFAULT_VER="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
+if [ -z "$DEFAULT_VER" ]; then
+  echo "[!] 未找到 git tag，请先打 tag（发布版本必须可追溯，与 build-all 一致）: git tag v<版本>" >&2
+  exit 1
+fi
 
 # ---- 参数解析：无参数 + 终端 → 交互模式；无参数 + 非终端 → 拒绝（防后台卡死）----
 if [ $# -eq 0 ]; then
   if [ -t 0 ]; then
     echo "== FMO Audit Service 元数据生成（交互模式）=="
-    read -rp "版本号 [${DEFAULT_VER}]: " VER
-    VER="${VER:-$DEFAULT_VER}"
+    VER="$DEFAULT_VER"   # 版本直接用 git tag，不再询问（与 build-all 的发布版本一致）
+    echo "版本（git tag）: $VER"
     read -rp "基础 URL [https://bg5esn.com/share/fmo/fmo-audit-service/]: " BASE
     BASE="${BASE:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
     read -rp "发布说明（可选，直接回车跳过）: " NOTES
