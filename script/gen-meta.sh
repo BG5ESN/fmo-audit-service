@@ -6,11 +6,11 @@
 #   bash script/gen-meta.sh                               # 交互模式（终端下逐项询问）
 #   bash script/gen-meta.sh -h | --help                   # 帮助
 # 版本直接取 git 最近 tag（发布版本 = tag，与 build-all 一致；无 tag 拒绝生成）
-# 基础URL 默认 https://bg5esn.com/share/fmo/fmo-audit-service/
+# 基础URL 默认 https://bg5esn.com/share/fmo/fas/
 # 发布说明可选（如 "BUG FIX."），写入 notes 字段
 # 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz|.zip 产物（固定名），
 # 生成 fas.json —— URL 带版本目录，与 SAS 同风格
-# 上传: 产物 → <基础URL>/v<版本>/，元数据 → <基础URL>/
+# 上传: 产物 → <基础URL>/v<版本>/，元数据 → https://bg5esn.com/share/fmo/fas.json
 # ============================================================
 set -e
 cd "$(dirname "$0")/.."
@@ -26,7 +26,7 @@ FMO Audit Service - OTA 元数据生成工具
 
 参数:
   版本      默认取 git 最近 tag（如 2.0.8），无 tag 则 0.0.0
-  基础URL   默认 https://bg5esn.com/share/fmo/fmo-audit-service/
+  基础URL   默认 https://bg5esn.com/share/fmo/fas/
   发布说明  可选（如 "BUG FIX."），写入 notes 字段
 
 示例:
@@ -34,8 +34,8 @@ FMO Audit Service - OTA 元数据生成工具
   bash script/gen-meta.sh 2.0.13 "BUG FIX."
   bash script/gen-meta.sh 2.0.13 https://example.com/share/ "修复xxx"
 
-说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fmo-audit-service.json；
-      上传: 产物 → <基础URL>/v<版本>/，元数据 → <基础URL>/ (覆盖)
+说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fas.json；
+      上传: 产物 → <基础URL>/v<版本>/，元数据 → https://bg5esn.com/share/fmo/fas.json (覆盖)
 EOF
 }
 
@@ -59,8 +59,8 @@ if [ $# -eq 0 ]; then
     echo "== FMO Audit Service 元数据生成（交互模式）=="
     VER="$DEFAULT_VER"   # 版本直接用 git tag，不再询问（与 build-all 的发布版本一致）
     echo "版本（git tag）: $VER"
-    read -rp "基础 URL [https://bg5esn.com/share/fmo/fmo-audit-service/]: " BASE
-    BASE="${BASE:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
+    read -rp "基础 URL [https://bg5esn.com/share/fmo/fas/]: " BASE
+    BASE="${BASE:-https://bg5esn.com/share/fmo/fas/}"
     read -rp "发布说明（可选，直接回车跳过）: " NOTES
   else
     echo "[!] 交互模式需要终端。非交互请传参: bash script/gen-meta.sh [版本] [基础URL] [发布说明]" >&2
@@ -69,7 +69,7 @@ if [ $# -eq 0 ]; then
   fi
 else
   VER="${1:-$DEFAULT_VER}"
-  BASE="${2:-https://bg5esn.com/share/fmo/fmo-audit-service/}"
+  BASE="${2:-https://bg5esn.com/share/fmo/fas/}"
   NOTES="${3:-}"
 fi
 
@@ -119,4 +119,4 @@ cat "$OUT"
 echo ""
 echo "上传步骤:"
 echo "  1. 产物 → ${BASE}v${VER}/"
-echo "  2. 元数据 → ${BASE}fas.json（覆盖）"
+echo "  2. 元数据 → https://bg5esn.com/share/fmo/fas.json（覆盖）"

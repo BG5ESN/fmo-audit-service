@@ -69,7 +69,7 @@ bash script/gen-meta.sh                  # 生成 OTA 元数据 fas.json（版�
 ```
 
 - 产物在 `dist/`：`fmo-audit-service-<rid>.tar.gz/.zip`（固定名，各带 .sha256），源码包 `fmo-audit-service-v<版本>-src.tar.gz`
-- 上传：产物 → `https://bg5esn.com/share/fmo/fmo-audit-service/v<版本>/`，`fas.json` → 根目录
+- 上传：产物 → `https://bg5esn.com/share/fmo/fas/v<版本>/`，`fas.json` → `https://bg5esn.com/share/fmo/fas.json`
 - Windows 对应 PowerShell 版：`script/build-all.ps1` / `script/gen-meta.ps1`
 - 要求：dotnet SDK + git；版本必须是干净语义版本（x.y.z）；打包前工作区无未提交改动
 

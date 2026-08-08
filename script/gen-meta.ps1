@@ -8,7 +8,7 @@
 [CmdletBinding()]
 param(
     [string]$Version = '',          # 版本号，默认取 git 最近 tag（发布版本 = tag，与 build-all 一致；无 tag 拒绝）
-    [string]$BaseUrl = 'https://bg5esn.com/share/fmo/fmo-audit-service/',   # 产物/元数据基础 URL
+    [string]$BaseUrl = 'https://bg5esn.com/share/fmo/fas/',   # 产物基础 URL（元数据固定 https://bg5esn.com/share/fmo/fas.json）
     [string]$Notes = '',            # 发布说明（可选），写入元数据 notes 字段
     [switch]$Help                   # 显示帮助
 )
@@ -23,7 +23,7 @@ FMO Audit Service - OTA 元数据生成工具 (PowerShell 版)
 
 参数:
   -Version  版本号，默认取 git 最近 tag (如 2.0.8)，无 tag 则 0.0.0
-  -BaseUrl  基础 URL，默认 https://bg5esn.com/share/fmo/fmo-audit-service/
+  -BaseUrl  基础 URL，默认 https://bg5esn.com/share/fmo/fas/
   -Notes    发布说明（可选），写入元数据 notes 字段
   -Help     显示本帮助
 
@@ -31,8 +31,8 @@ FMO Audit Service - OTA 元数据生成工具 (PowerShell 版)
   powershell -File script/gen-meta.ps1
   powershell -File script/gen-meta.ps1 -Version 2.0.12 -Notes "BUG FIX."
 
-说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fmo-audit-service.json；
-      上传: 产物 -> <基础URL>/v<版本>/，元数据 -> <基础URL>/fas.json (覆盖)
+说明: 扫描 dist/ 下 fmo-audit-service-<rid>.tar.gz/.zip 产物，生成 fas.json；
+      上传: 产物 -> <基础URL>/v<版本>/，元数据 -> https://bg5esn.com/share/fmo/fas.json (覆盖)
 "@
     exit 0
 }
@@ -95,4 +95,4 @@ Get-Content $OUT
 Write-Host ""
 Write-Host "上传步骤:"
 Write-Host "  1. 产物 → ${BaseUrl}v${Version}/"
-Write-Host "  2. 元数据 → ${BaseUrl}fas.json（覆盖）"
+Write-Host "  2. 元数据 → https://bg5esn.com/share/fmo/fas.json（覆盖）"
