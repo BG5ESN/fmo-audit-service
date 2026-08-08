@@ -28,7 +28,7 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 推荐使用官方安装脚本（自动下载最新版并可选注册 NSSM 服务）：
 
 ```powershell
-irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 | iex
+irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\fas-install.ps1"; iex (Get-Content "$env:TEMP\fas-install.ps1" -Raw -Encoding UTF8)
 ```
 
 安装内容：
@@ -76,7 +76,7 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/uninstall.sh | sudo bash
 - **Windows**：
 
 ```powershell
-irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 | iex
+irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 -OutFile "$env:TEMP\fas-uninstall.ps1"; iex (Get-Content "$env:TEMP\fas-uninstall.ps1" -Raw -Encoding UTF8)
 ```
 
 卸载会停止/删除服务并删除数据目录（含数据库），执行前请确认。
