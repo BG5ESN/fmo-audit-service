@@ -63,10 +63,8 @@ EOF
       rm -rf "$STAGE"
       ;;
     *)
-      # Linux 系（x64/arm64/arm）: 二进制 + deploy 脚本 + systemd 模板 + README
+      # Linux 系（x64/arm64/arm）: 二进制 + README → tar.gz
       cp "publish/$RID/fmo-audit-service" "$STAGE/"
-      cp deploy/fmo-audit-service.service "$STAGE/"
-      cp deploy-linux.sh "$STAGE/"
       cp README.md "$STAGE/"
       tar czf "$DIST/fmo-audit-service-v${VER}-${RID}.tar.gz" -C "$STAGE" .
       rm -rf "$STAGE"

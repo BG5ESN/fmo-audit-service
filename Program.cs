@@ -189,7 +189,7 @@ app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFs });
 
 // 客户端 IP（登录锁定用；反代场景需显式启用 trust_proxy 才信任 X-Forwarded-For）
 // 安全说明：默认直连模式用 TCP 对端 IP——客户端伪造 X-Forwarded-For 无法绕过登录锁定；
-// 启用 trust_proxy 后反代必须覆盖该头为真实客户端 IP（见 DEPLOY.md 安全部署选项）
+// 启用 trust_proxy 后反代必须覆盖该头为真实客户端 IP（见 docs/fas-install-guide.md 安全部署选项）
 string ClientIp(HttpContext ctx)
 {
     // 环境变量（systemd 配 EMQX_MONITOR_TRUST_PROXY=1）或 settings 表 trust_proxy=1 均可启用
