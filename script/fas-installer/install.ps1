@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # FMO Audit Service (FAS) — Windows 安装脚本 (PowerShell)
 # 用法: irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 | iex
 # 安装: %LOCALAPPDATA%\FMOAuditService\fmo-audit-service.exe

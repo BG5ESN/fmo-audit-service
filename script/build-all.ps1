@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # FMO审计工具 — 多平台单文件编译工具 (Windows PowerShell)
 # 用法: powershell -ExecutionPolicy Bypass -File script\build-all.ps1 [-Version 1.0.0] [-Tag]
 #   版本号默认: 最近 git tag 或 1.0.0
