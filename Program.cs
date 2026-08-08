@@ -189,6 +189,7 @@ string ClientIp(HttpContext ctx)
 app.MapGet("/api/status", () => Results.Json(new
 {
     ok = true,
+    version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "2.0.0",   // 应用版本
     initialized = auth.IsInitialized,
     configured = emqx.IsConfigured,
     collecting = collector.IsConfigured,

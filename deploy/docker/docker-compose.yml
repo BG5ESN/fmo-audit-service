@@ -1,4 +1,4 @@
-# FMO审计工具 — docker compose 示例
+# FMO Audit Service — docker compose 示例
 # 用法:
 #   1. bash script/build-all.sh 1.1.0   (或 PLATFORMS=linux-x64 ...)
 #   2. cp dist/emqx-monitor-server-linux-x64-v1.1.0 deploy/docker/emqx-monitor-server

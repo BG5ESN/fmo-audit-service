@@ -1,4 +1,4 @@
-# FMO审计工具 — Docker 镜像
+# FMO Audit Service — Docker 镜像
 # 基础镜像选 glibc 系（Debian/Ubuntu）：publish 的 linux-x64 单文件是 glibc 构建，
 # 不要用 alpine（musl 不兼容）
 FROM debian:bookworm-slim
