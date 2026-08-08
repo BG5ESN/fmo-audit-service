@@ -29,19 +29,9 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; 
     ok "已移除 systemd 服务 $SERVICE_NAME"
 fi
 
-# 删除数据？（默认保留，提示用户）
-if [ -d "$INSTALL_DIR" ]; then
-    read -r -p "删除数据目录 $INSTALL_DIR（含数据库与配置）？[y/N] " ans < /dev/tty
-    case "$ans" in
-        y|Y)
-            rm -rf "$INSTALL_DIR"
-            ok "已删除 $INSTALL_DIR"
-            ;;
-        *)
-            warn "保留 $INSTALL_DIR（如需彻底删除请手动 rm -rf $INSTALL_DIR）"
-            ;;
-    esac
-fi
+# 删除数据目录（执行卸载即用户明确意愿，直接彻底删除，对齐 SAS）
+rm -rf "$INSTALL_DIR"
+ok "已删除 $INSTALL_DIR"
 
 # 删除专用用户
 if id "$RUN_USER" >/dev/null 2>&1; then
