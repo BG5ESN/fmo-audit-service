@@ -38,7 +38,9 @@ if ($dirty) {
 }
 
 New-Item -ItemType Directory -Force -Path $Dist | Out-Null
-Write-Host "== FMO审计工具 多平台单文件编译 v$Version ==" -ForegroundColor Cyan
+# 清理旧产物：产物带版本号会累积（每版 6 平台约 600MB），发布前清空
+Get-ChildItem $Dist -File -ErrorAction SilentlyContinue | Remove-Item -Force
+Write-Host "== FMO Audit Service 多平台单文件编译 v$Version ==" -ForegroundColor Cyan
 Write-Host "平台: $($Platforms -replace ',', ', ')"
 
 # ---- 逐平台 publish（单文件自包含）----

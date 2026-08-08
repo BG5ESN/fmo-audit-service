@@ -145,9 +145,14 @@ EOF
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" > /dev/null 2>&1
+START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 systemctl start "$SERVICE_NAME"
 info "      等待服务启动 (5 秒)..."
 sleep 5
+echo ""
+echo "  ── 启动日志 ──"
+journalctl -u "$SERVICE_NAME" --since "$START_TIME" --no-pager 2>/dev/null | tail -15 || true
+echo "  ──────────────"
 
 # ═══════════════════════════════════════════════════════════════
 # STEP 5: 验证 + 使用说明

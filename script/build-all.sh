@@ -26,7 +26,9 @@ command -v dotnet >/dev/null 2>&1 || { echo "[!] 未找到 dotnet，请先安装
 git diff --quiet || { echo "[!] 工作区有未提交改动，请先 commit 再编译（发布必须可追溯）"; exit 1; }
 
 mkdir -p "$DIST"
-echo "== FMO审计工具 多平台单文件编译 v$VER =="
+# 清理旧产物：产物带版本号会累积（每版 6 平台约 600MB），发布前清空
+rm -rf "$DIST"/* 2>/dev/null || true
+echo "== FMO Audit Service 多平台单文件编译 v$VER =="
 echo "平台: ${PLATFORMS//,/, }"
 echo "（树莓派 32 位用 linux-arm，64 位用 linux-arm64）"
 
