@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   FMO Audit Service — OTA 元数据生成工具（PowerShell 版，对齐 gen-meta.sh）
 .DESCRIPTION
