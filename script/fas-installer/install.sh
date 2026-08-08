@@ -36,7 +36,7 @@ fi
 
 # ── 依赖预检 ──
 MISSING=""
-for cmd in curl tar systemctl; do
+for cmd in curl tar systemctl python3; do
     command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
 done
 if [ -n "$MISSING" ]; then
@@ -62,14 +62,15 @@ info "[1/5] 检测平台... $OS $ARCH -> $RID"
 # STEP 2: 获取版本 + 下载
 # ═══════════════════════════════════════════════════════════════
 info "[2/5] 获取最新版本..."
-META=$(curl -fsSL "$META_URL")
-VERSION=$(echo "$META" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)
-DOWNLOAD_URL=$(echo "$META" | python3 -c "
+META=$(curl -fsSL --retry 2 --retry-delay 2 "$META_URL")
+read -r VERSION DOWNLOAD_URL < <(echo "$META" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 a=d['assets'].get('$RID')
-print(a if isinstance(a,str) else (a['url'] if a else ''))
-" 2>/dev/null || echo "")
+v=d.get('version','')
+u=a if isinstance(a,str) else (a.get('url','') if a else '')
+print(v, u)
+")
 
 if [ -z "$VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
     err "无法解析版本信息（$META_URL），请检查网络或元数据是否已发布"
@@ -80,7 +81,7 @@ info "      版本: v$VERSION | 下载: $DOWNLOAD_URL"
 TMPDIR_INSTALL=$(mktemp -d)
 ARCHIVE="$TMPDIR_INSTALL/fas.tar.gz"
 # 传输完整性由 HTTPS/TLS 保障，官方源可信，无需额外哈希
-curl -fL --progress-bar "$DOWNLOAD_URL" -o "$ARCHIVE"
+curl -fL --retry 2 --retry-delay 2 --progress-bar "$DOWNLOAD_URL" -o "$ARCHIVE"
 
 mkdir -p "$TMPDIR_INSTALL/extract"
 # 下载的是 tar.gz 包（build-all 产物，对齐 SAS），解压找主程序

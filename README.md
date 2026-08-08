@@ -25,7 +25,13 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 
 ### Windows
 
-解压 `fmo-audit-service-win-x64.zip`，双击 `fmo-audit-service.exe` 运行（或注册为 NSSM 服务），访问 `http://<服务器IP>:9527`。
+推荐使用官方安装脚本（自动下载最新版，可选注册 NSSM 服务）：
+
+```powershell
+irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 | iex
+```
+
+安装到 `%LOCALAPPDATA%\FMOAuditService\`；或解压 zip 双击 `fmo-audit-service.exe` 直接运行。访问 `http://<服务器IP>:9527`。
 
 ### 首次配置
 
@@ -44,8 +50,8 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 
 | 操作 | 方式 |
 |---|---|
-| 升级 | 配置页「版本与更新」按钮，或 `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
-| 卸载 | `curl -fsSL https://bg5esn.com/share/fmo/fas-installer/uninstall.sh \| sudo bash` |
+| 升级 | 配置页「版本与更新」按钮；Linux 命令行 `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启；Windows NSSM 更新后需 `nssm restart fmo-fas`） |
+| 卸载 | Linux: `curl -fsSL https://bg5esn.com/share/fmo/fas-installer/uninstall.sh \| sudo bash`；Windows: `irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 \| iex` |
 
 ## 环境变量
 

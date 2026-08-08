@@ -25,14 +25,25 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 
 ### Windows
 
-- **直接运行**：解压 zip，双击 `fmo-audit-service.exe`，保持窗口常开
-- **注册为系统服务**（推荐：开机自启 + 崩溃自拉起），用 NSSM：
+推荐使用官方安装脚本（自动下载最新版并可选注册 NSSM 服务）：
+
+```powershell
+irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 | iex
+```
+
+安装内容：
+- 二进制 → `%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.exe`
+- 数据库 → `%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.db`（由 `EMQX_MONITOR_DB` 显式指定）
+- 系统服务 → 可选注册 NSSM 服务 `fmo-fas`（需已安装 NSSM，否则手动运行）
+
+手动注册 NSSM（等价于安装脚本的行为）：
 
 ```bat
-nssm install EmqxMonitorServer "C:\emqx-monitor\fmo-audit-service.exe"
-nssm set EmqxMonitorServer AppDirectory C:\emqx-monitor
-nssm set EmqxMonitorServer Start SERVICE_AUTO_START
-nssm start EmqxMonitorServer
+nssm install fmo-fas "%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.exe"
+nssm set fmo-fas AppDirectory %LOCALAPPDATA%\FMOAuditService
+nssm set fmo-fas AppEnvironmentExtra EMQX_MONITOR_DB=%LOCALAPPDATA%\FMOAuditService\fmo-audit-service.db
+nssm set fmo-fas Start SERVICE_AUTO_START
+nssm start fmo-fas
 ```
 
 Windows 防火墙放行 9527 端口。
@@ -49,16 +60,26 @@ Windows 防火墙放行 9527 端口。
 
 | 方式 | 操作 |
 |---|---|
-| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验，服务自动重启） |
-| 命令行 | `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
+| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验；Linux systemd 自动重启，Windows NSSM 需手动 `nssm restart fmo-fas`） |
+| 命令行 | Linux: `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
 
 更新安全性：下载走 HTTPS（传输完整性由 TLS 保障），来源为官方 bg5esn.com。
 
 ## 卸载
 
+- **Linux**：
+
 ```bash
 curl -fsSL https://bg5esn.com/share/fmo/fas-installer/uninstall.sh | sudo bash
 ```
+
+- **Windows**：
+
+```powershell
+irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 | iex
+```
+
+卸载会停止/删除服务并删除数据目录（含数据库），执行前请确认。
 
 ## 常用命令
 
