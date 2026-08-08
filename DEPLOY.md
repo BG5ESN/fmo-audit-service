@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 |---|---|
-| 二进制 | emqx-monitor-server（Linux）/ emqx-monitor-server.exe（Windows） |
+| 二进制 | fmo-audit-service（Linux）/ fmo-audit-service.exe（Windows） |
 | 默认端口 | 9527（环境变量 `EMQX_MONITOR_PORT` 覆盖） |
 | 数据目录 | Linux 默认 `~/.local/share/EmqxMonitor/`；Windows 默认 `%LOCALAPPDATA%\EmqxMonitor\`（环境变量 `EMQX_MONITOR_DB` 覆盖） |
 | 采集精度 | 1 分钟（每 60 秒轮询一次 EMQX API） |
@@ -24,13 +24,13 @@ timedatectl set-timezone Asia/Shanghai
 ```bash
 # 1. 放置二进制
 sudo mkdir -p /opt/emqx-monitor
-sudo cp emqx-monitor-server /opt/emqx-monitor/
+sudo cp fmo-audit-service /opt/emqx-monitor/
 
-# 2. 安装 systemd 服务（模板见 deploy/emqx-monitor-server.service，按需改端口/db路径）
-sudo cp deploy/emqx-monitor-server.service /etc/systemd/system/
+# 2. 安装 systemd 服务（模板见 deploy/fmo-audit-service.service，按需改端口/db路径）
+sudo cp deploy/fmo-audit-service.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now emqx-monitor-server
-systemctl status emqx-monitor-server
+sudo systemctl enable --now fmo-audit-service
+systemctl status fmo-audit-service
 
 # 3. 访问 http://服务器IP:9527 → 首次设置管理员账号
 # 4. 登录后在"配置"页填入 EMQX 地址 + API Key（Dashboard → 管理 → API 密钥）
@@ -69,7 +69,7 @@ location /api/login { limit_req zone=login burst=5; proxy_pass http://127.0.0.1:
 ```
 - **C. VPN 访问（最稳）**：Tailscale/WireGuard 组网，公网不暴露任何端口。
 
-**数据安全**：db 文件含 EMQX API Secret / ingest token / 管理员哈希，请勿以 root 运行服务（模板默认 User=emqx-monitor + db 文件 600 权限）；定期备份用 `sqlite3 emqx-monitor-server.db ".backup /backup/xxx.db"`（WAL 模式下直接 cp 可能丢数据）。
+**数据安全**：db 文件含 EMQX API Secret / ingest token / 管理员哈希，请勿以 root 运行服务（模板默认 User=emqx-monitor + db 文件 600 权限）；定期备份用 `sqlite3 fmo-audit-service.db ".backup /backup/xxx.db"`（WAL 模式下直接 cp 可能丢数据）。
 
 ## EMQX 集群部署（多服务器异地互联）
 
@@ -104,14 +104,14 @@ server {
 
 ### 方式 A：直接运行（简单）
 
-双击 `emqx-monitor-server.exe`，保持窗口常开。首次访问 `http://服务器IP:9527` 设置管理员。
+双击 `fmo-audit-service.exe`，保持窗口常开。首次访问 `http://服务器IP:9527` 设置管理员。
 
 ### 方式 B：注册为系统服务（推荐，开机自启 + 崩溃自拉起）
 
 用 NSSM：
 
 ```bat
-nssm install EmqxMonitorServer "C:\emqx-monitor\emqx-monitor-server.exe"
+nssm install EmqxMonitorServer "C:\emqx-monitor\fmo-audit-service.exe"
 nssm set EmqxMonitorServer AppDirectory C:\emqx-monitor
 nssm set EmqxMonitorServer AppEnvironmentExtra EMQX_MONITOR_PORT=9527
 nssm set EmqxMonitorServer Start SERVICE_AUTO_START
@@ -150,5 +150,5 @@ Windows 防火墙放行 9527 端口。
 
 ```bash
 # /etc/cron.d/emqx-monitor-backup
-0 3 * * * root cp /opt/emqx-monitor/emqx-monitor-server.db /opt/emqx-monitor/backup/$(date +\%F).db
+0 3 * * * root cp /opt/emqx-monitor/fmo-audit-service.db /opt/emqx-monitor/backup/$(date +\%F).db
 ```

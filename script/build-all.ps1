@@ -5,7 +5,7 @@
 #   平台列表可用参数覆盖: -Platforms "linux-x64,win-x64"
 # 支持平台: linux-x64 / linux-arm64 / linux-arm / osx-x64 / osx-arm64 / win-x64
 # 产物: dist\ 下每个平台一个最终单文件 + .sha256 校验
-#   emqx-monitor-server-<平台>-v<版本>    (win 为 .exe)
+#   fmo-audit-service-<平台>-v<版本>    (win 为 .exe)
 # 可选: -Tag → 打 git tag v<版本>
 # ============================================================
 param(
@@ -52,14 +52,14 @@ foreach ($RID in $Platforms.Split(',')) {
         exit 1
     }
 
-    $Bin = "publish/$RID/emqx-monitor-server"
+    $Bin = "publish/$RID/fmo-audit-service"
     if ($RID -eq "win-x64") { $Bin = "$Bin.exe" }
     if (-not (Test-Path $Bin)) {
         Write-Host "[!] $RID 产物缺失: $Bin，日志: $Log" -ForegroundColor Red
         exit 1
     }
 
-    $Out = "$Dist/emqx-monitor-server-$RID-v$Version"
+    $Out = "$Dist/fmo-audit-service-$RID-v$Version"
     Copy-Item $Bin $Out -Force
     $Hash = (Get-FileHash $Out -Algorithm SHA256).Hash.ToLower()
     Set-Content -Path "$Out.sha256" -Value "$Hash  $Out" -Encoding ASCII

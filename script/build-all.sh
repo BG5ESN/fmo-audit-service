@@ -7,7 +7,7 @@
 # 支持平台: linux-x64 / linux-arm64(树莓派64) / linux-arm(树莓派32)
 #           osx-x64(Intel Mac) / osx-arm64(Apple Silicon) / win-x64
 # 产物: dist/ 下每个平台一个最终单文件 + .sha256 校验
-#   emqx-monitor-server-<平台>-v<版本>    (win 为 .exe)
+#   fmo-audit-service-<平台>-v<版本>    (win 为 .exe)
 # 可选: 第二个参数 tag → 打 git tag v<版本>
 # ============================================================
 set -e
@@ -37,11 +37,11 @@ for RID in ${PLATFORMS//,/ }; do
     -p:DebugType=None -p:DebugSymbols=false \
     -o "publish/$RID" >> "$LOG" 2>&1 || { echo "[!] $RID 发布失败，日志: $LOG"; exit 1; }
 
-  BIN="publish/$RID/emqx-monitor-server"
+  BIN="publish/$RID/fmo-audit-service"
   [ "$RID" = "win-x64" ] && BIN="$BIN.exe"
   [ -f "$BIN" ] || { echo "[!] $RID 产物缺失: $BIN，日志: $LOG"; exit 1; }
 
-  OUT="$DIST/emqx-monitor-server-${RID}-v${VER}"
+  OUT="$DIST/fmo-audit-service-${RID}-v${VER}"
   cp "$BIN" "$OUT"
   chmod +x "$OUT" 2>/dev/null || true
   sha256sum "$OUT" > "$OUT.sha256"

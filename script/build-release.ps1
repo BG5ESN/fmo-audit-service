@@ -51,23 +51,23 @@ foreach ($RID in $Plats) {
 
     if ($RID -like "win-*") {
         # Windows: exe + README → zip
-        Copy-Item "publish/$RID/emqx-monitor-server.exe" $stage/
+        Copy-Item "publish/$RID/fmo-audit-service.exe" $stage/
         Copy-Item README.md $stage/
-        Compress-Archive -Path (Join-Path $stage "*") -DestinationPath "$Dist/emqx-monitor-server-v$Version-$RID.zip" -Force
+        Compress-Archive -Path (Join-Path $stage "*") -DestinationPath "$Dist/fmo-audit-service-v$Version-$RID.zip" -Force
     }
     elseif ($RID -like "osx-*") {
         # macOS: 二进制 + README → tar.gz（mac 无 systemd，直接运行/launchd）
-        Copy-Item "publish/$RID/emqx-monitor-server" $stage/
+        Copy-Item "publish/$RID/fmo-audit-service" $stage/
         Copy-Item README.md $stage/
-        tar czf "$Dist/emqx-monitor-server-v$Version-$RID.tar.gz" -C $stage .
+        tar czf "$Dist/fmo-audit-service-v$Version-$RID.tar.gz" -C $stage .
     }
     else {
         # Linux 系: 二进制 + deploy 脚本 + systemd 模板 + README → tar.gz
-        Copy-Item "publish/$RID/emqx-monitor-server" $stage/
-        Copy-Item deploy/emqx-monitor-server.service $stage/
+        Copy-Item "publish/$RID/fmo-audit-service" $stage/
+        Copy-Item deploy/fmo-audit-service.service $stage/
         Copy-Item deploy-linux.sh $stage/
         Copy-Item README.md $stage/
-        tar czf "$Dist/emqx-monitor-server-v$Version-$RID.tar.gz" -C $stage .
+        tar czf "$Dist/fmo-audit-service-v$Version-$RID.tar.gz" -C $stage .
     }
     Write-Host "  ✓ $RID 打包完成"
 }
@@ -75,12 +75,12 @@ if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 
 # ---- 2. 源码包 ----
 Write-Host "== [源码包] git archive =="
-git archive --format=tar.gz --prefix="emqx-monitor-server/" `
-  -o "$Dist/emqx-monitor-server-v$Version-src.tar.gz" HEAD
+git archive --format=tar.gz --prefix="fmo-audit-service/" `
+  -o "$Dist/fmo-audit-service-v$Version-src.tar.gz" HEAD
 
 # ---- 3. 校验和 ----
 Write-Host "== [校验和] =="
-Get-ChildItem "$Dist/emqx-monitor-server-v$Version-*" -File | Where-Object { $_.Extension -ne ".sha256" } | ForEach-Object {
+Get-ChildItem "$Dist/fmo-audit-service-v$Version-*" -File | Where-Object { $_.Extension -ne ".sha256" } | ForEach-Object {
     $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLower()
     "$hash  $($_.Name)" | Out-File -FilePath "$($_.FullName).sha256" -Encoding ascii
 }

@@ -6,8 +6,8 @@
 # 支持平台: linux-x64 / linux-arm64(树莓派64位) / linux-arm(树莓派32位)
 #           osx-x64(Intel Mac) / osx-arm64(Apple Silicon) / win-x64
 # 产物: dist/
-#   emqx-monitor-server-v<版本>-<平台>.tar.gz|.zip  (部署包)
-#   emqx-monitor-server-v<版本>-src.tar.gz          (源码包)
+#   fmo-audit-service-v<版本>-<平台>.tar.gz|.zip  (部署包)
+#   fmo-audit-service-v<版本>-src.tar.gz          (源码包)
 #   每个包附带 .sha256 校验文件
 # ============================================================
 set -e
@@ -42,9 +42,9 @@ for RID in "${PLATS[@]}"; do
   case "$RID" in
     win-*)
       # Windows: exe + README
-      cp "publish/$RID/emqx-monitor-server.exe" "$STAGE/"
+      cp "publish/$RID/fmo-audit-service.exe" "$STAGE/"
       cp README.md "$STAGE/"
-      python3 - "$DIST/emqx-monitor-server-v${VER}-${RID}.zip" <<'EOF'
+      python3 - "$DIST/fmo-audit-service-v${VER}-${RID}.zip" <<'EOF'
 import sys, zipfile, os
 out, src = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -57,18 +57,18 @@ EOF
       ;;
     osx-*)
       # macOS: 二进制 + README（mac 无 systemd，直接运行/launchd）
-      cp "publish/$RID/emqx-monitor-server" "$STAGE/"
+      cp "publish/$RID/fmo-audit-service" "$STAGE/"
       cp README.md "$STAGE/"
-      tar czf "$DIST/emqx-monitor-server-v${VER}-${RID}.tar.gz" -C "$STAGE" .
+      tar czf "$DIST/fmo-audit-service-v${VER}-${RID}.tar.gz" -C "$STAGE" .
       rm -rf "$STAGE"
       ;;
     *)
       # Linux 系（x64/arm64/arm）: 二进制 + deploy 脚本 + systemd 模板 + README
-      cp "publish/$RID/emqx-monitor-server" "$STAGE/"
-      cp deploy/emqx-monitor-server.service "$STAGE/"
+      cp "publish/$RID/fmo-audit-service" "$STAGE/"
+      cp deploy/fmo-audit-service.service "$STAGE/"
       cp deploy-linux.sh "$STAGE/"
       cp README.md "$STAGE/"
-      tar czf "$DIST/emqx-monitor-server-v${VER}-${RID}.tar.gz" -C "$STAGE" .
+      tar czf "$DIST/fmo-audit-service-v${VER}-${RID}.tar.gz" -C "$STAGE" .
       rm -rf "$STAGE"
       ;;
   esac
@@ -77,13 +77,13 @@ done
 
 # ---- 2. 源码包 ----
 echo "== [源码包] git archive =="
-git archive --format=tar.gz --prefix="emqx-monitor-server/" \
-  -o "$DIST/emqx-monitor-server-v${VER}-src.tar.gz" HEAD
+git archive --format=tar.gz --prefix="fmo-audit-service/" \
+  -o "$DIST/fmo-audit-service-v${VER}-src.tar.gz" HEAD
 
 # ---- 3. 校验和 ----
 echo "== [校验和] =="
 cd "$DIST"
-for f in emqx-monitor-server-v${VER}-*; do
+for f in fmo-audit-service-v${VER}-*; do
   [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
 done
 cd - > /dev/null

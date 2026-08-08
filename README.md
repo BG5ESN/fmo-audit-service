@@ -11,7 +11,7 @@
 ### Linux（推荐）
 
 ```bash
-tar xzf emqx-monitor-server-v1.0.0-linux-x64.tar.gz
+tar xzf fmo-audit-service-v1.0.0-linux-x64.tar.gz
 bash deploy-linux.sh          # 安装到 /opt/emqx-monitor + systemd 服务
 ```
 
@@ -23,7 +23,7 @@ bash deploy-linux.sh          # 安装到 /opt/emqx-monitor + systemd 服务
 
 ### Windows
 
-解压 `emqx-monitor-server-v1.0.0-win-x64.zip`，双击 `emqx-monitor-server.exe` 运行（或注册为 NSSM 服务），访问 `http://<服务器IP>:9527`。
+解压 `fmo-audit-service-v1.0.0-win-x64.zip`，双击 `fmo-audit-service.exe` 运行（或注册为 NSSM 服务），访问 `http://<服务器IP>:9527`。
 
 ## 使用场景（反查伪造数据包）
 
@@ -41,7 +41,7 @@ bash deploy-linux.sh          # 安装到 /opt/emqx-monitor + systemd 服务
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `EMQX_MONITOR_PORT` | 9527 | HTTP 监听端口 |
-| `EMQX_MONITOR_DB` | 用户数据目录 | SQLite 数据库路径（如 `/opt/emqx-monitor/emqx-monitor-server.db`） |
+| `EMQX_MONITOR_DB` | 用户数据目录 | SQLite 数据库路径（如 `/opt/emqx-monitor/fmo-audit-service.db`） |
 
 ## 常见操作
 

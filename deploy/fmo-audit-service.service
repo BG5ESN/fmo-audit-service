@@ -8,10 +8,10 @@ Type=simple
 User=emqx-monitor
 Group=emqx-monitor
 # 二进制与 db 目录（按实际部署路径修改）
-ExecStart=/opt/emqx-monitor/emqx-monitor-server
+ExecStart=/opt/emqx-monitor/fmo-audit-service
 WorkingDirectory=/opt/emqx-monitor
 Environment=EMQX_MONITOR_PORT=9527
-Environment=EMQX_MONITOR_DB=/opt/emqx-monitor/emqx-monitor-server.db
+Environment=EMQX_MONITOR_DB=/opt/emqx-monitor/fmo-audit-service.db
 # on-failure：配置错误时不无限重启
 Restart=on-failure
 RestartSec=5
