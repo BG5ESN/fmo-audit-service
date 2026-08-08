@@ -38,7 +38,7 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 | **命令行** | 同上/无 UI 场景 | `sudo /opt/fmo-fas/fmo-audit-service --update`（后执行 `systemctl restart fmo-fas`） |
 | **Docker** | 容器部署 | `docker pull <镜像> && docker compose up -d`（容器内自动禁用自更新） |
 
-更新安全性：下载后 **sha256 校验**（元数据携带哈希，防篡改），校验失败自动中止。
+更新安全性：下载走 HTTPS（传输完整性由 TLS 保障），来源为官方 bg5esn.com。
 
 ## 卸载
 

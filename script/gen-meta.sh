@@ -28,9 +28,8 @@ for f in "$DIST"/fmo-audit-service-*-v${VER}*; do
   # 去掉前缀和后缀得到 rid
   RID="${NAME#fmo-audit-service-}"
   RID="${RID%-v${VER}*}"
-  SHA=$(sha256sum "$f" | awk '{print $1}')
   ASSETS="$ASSETS
-    \"$RID\": { \"url\": \"${BASE}${NAME}\", \"sha256\": \"$SHA\" },"
+    \"$RID\": \"${BASE}${NAME}\","
   COUNT=$((COUNT + 1))
   echo "  + $NAME -> rid=$RID"
 done

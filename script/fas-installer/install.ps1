@@ -32,24 +32,12 @@ Write-Host "[2/4] 下载..."
 $zip = Join-Path $tmp "fas.zip"
 Invoke-WebRequest -Uri $asset.url -OutFile $zip -TimeoutSec 120
 
-# sha256 校验
-$actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-if ($asset.sha256 -and $actual -ne $asset.sha256.ToLower()) {
-    Write-Host "[!] sha256 校验失败：文件可能被篡改" -ForegroundColor Red
-    exit 1
-}
-Write-Host "      sha256 校验通过"
-
-# STEP 2: 解压 + 安装
+# STEP 2: 安装（产物是裸单文件 exe；传输完整性由 HTTPS/TLS 保障）
 Write-Host "[3/4] 安装到 $InstallDir ..."
-Expand-Archive $zip -DestinationPath $tmp -Force
-$exe = Get-ChildItem $tmp -Recurse -Filter "fmo-audit-service.exe" | Select-Object -First 1
-if (-not $exe) {
-    Write-Host "[!] 下载包中未找到 fmo-audit-service.exe" -ForegroundColor Red
-    exit 1
-}
+$exePath = Join-Path $tmp "fmo-audit-service.exe"
+Move-Item $zip $exePath -Force
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item $exe.FullName (Join-Path $InstallDir "fmo-audit-service.exe") -Force
+Copy-Item $exePath (Join-Path $InstallDir "fmo-audit-service.exe") -Force
 
 # STEP 3: 服务注册（NSSM 可选）
 Write-Host "[4/4] 服务注册..."

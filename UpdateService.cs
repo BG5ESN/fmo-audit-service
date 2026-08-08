@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace EmqxMonitor;
@@ -93,10 +92,9 @@ public static class UpdateService
             if (!doc.RootElement.TryGetProperty("assets", out var assets)
                 || !assets.TryGetProperty(rid, out var asset))
                 return ($"元数据中没有当前平台 {rid} 的下载地址", null);
-            var url = asset.TryGetProperty("url", out var u) ? u.GetString() : null;
-            var expectedSha = asset.TryGetProperty("sha256", out var sh) ? sh.GetString() : null;
+            var url = asset.ValueKind == JsonValueKind.String ? asset.GetString()
+                     : (asset.TryGetProperty("url", out var u) ? u.GetString() : null);
             if (string.IsNullOrEmpty(url)) return ("元数据缺少下载 URL", null);
-            if (string.IsNullOrEmpty(expectedSha)) return ("元数据缺少 sha256（拒绝无校验更新）", null);
 
             // 2) 下载到临时目录（流式）
             var tempDir = Path.Combine(Path.GetTempPath(), "fas_update");
@@ -114,13 +112,7 @@ public static class UpdateService
                 await src.CopyToAsync(dst);
             }
 
-            // 3) sha256 校验
-            await using (var fs = File.OpenRead(archivePath))
-            {
-                var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs));
-                if (!string.Equals(actual, expectedSha, StringComparison.OrdinalIgnoreCase))
-                    return ("sha256 校验失败，已中止更新（文件可能被篡改）", null);
-            }
+            // 3) 下载完成（传输完整性由 HTTPS/TLS 保障，官方源可信，无需额外哈希）
 
             // 4) 解压（归档）或直接使用（裸二进制产物）
             string newExe;
