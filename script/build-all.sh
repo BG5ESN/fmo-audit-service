@@ -7,7 +7,9 @@
 # 支持平台: linux-x64 / linux-arm64(树莓派64) / linux-arm(树莓派32)
 #           osx-x64(Intel Mac) / osx-arm64(Apple Silicon) / win-x64
 # 产物: dist/ 下每个平台一个最终单文件 + .sha256 校验
-#   fmo-audit-service-<平台>-v<版本>    (win 为 .exe)
+#   fmo-audit-service-<平台>.tar.gz/.zip（固定名，版本由元数据 version 表达）
+# 版本号必须是干净的语义版本 (x.y.z)：自动写入 csproj <Version>（程序集版本 = 发布版本，
+#   OTA 的 CurrentVersion 读程序集版本，不 bump 会导致永远"有新版本"/永远"已最新"）
 # 可选: 第二个参数 tag → 打 git tag v<版本>
 # ============================================================
 set -e
@@ -25,9 +27,26 @@ PLATFORMS="${PLATFORMS:-linux-x64,linux-arm64,linux-arm,osx-x64,osx-arm64,win-x6
 DIST="dist"
 LOG="/tmp/fmo-build-all-$(date +%s).log"
 
+# ---- 版本校验：必须是干净语义版本（x.y.z），强制"先打 tag 再发布" ----
+# 脏版本（如 2.0.12-1-g91d0baf）写进 csproj 会导致 AssemblyVersion 非法编译失败，
+# 且元数据 version 会被 CompareVersions 解析错位——直接拒绝
+if ! [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "[!] 版本号必须是干净的语义版本 (x.y.z)，当前: $VER"
+  echo "    请先打 tag: git tag v<版本> && git push --tags，或显式传参: bash script/build-all.sh 2.0.13"
+  exit 1
+fi
+
 # ---- 前置检查 ----
 command -v dotnet >/dev/null 2>&1 || { echo "[!] 未找到 dotnet，请先安装 .NET SDK"; exit 1; }
 git diff --quiet || { echo "[!] 工作区有未提交改动，请先 commit 再编译（发布必须可追溯）"; exit 1; }
+
+# ---- 版本写入 csproj：程序集版本 = 发布版本（OTA CurrentVersion 读程序集版本）----
+if ! grep -q "<Version>${VER}</Version>" emqx-monitor.csproj; then
+  sed -i "s|<Version>[^<]*</Version>|<Version>${VER}</Version>|" emqx-monitor.csproj
+  echo "== 版本已写入 csproj: $VER（请随发布一起提交）=="
+else
+  echo "== csproj 版本已是 $VER，无需更新 =="
+fi
 
 mkdir -p "$DIST"
 # 清理旧产物：产物带版本号会累积（每版 6 平台约 600MB），发布前清空
@@ -76,6 +95,7 @@ echo ""
 echo "== 完成 =="
 ls -la "$DIST/" | grep -v "^total"
 echo "日志: $LOG"
+echo "提示: 提交版本号变更 → git add emqx-monitor.csproj && git commit -m \"bump: v$VER\""
 
 # ---- 可选: 打 git tag ----
 if [ "$DO_TAG" = "tag" ]; then
