@@ -493,8 +493,10 @@
         $('topic-name').textContent = d.topic + ' /#';
         const st = $('ingest-status');
         if (d.enabled) {
-          st.className = 'status-ok';
-          st.textContent = `已启用（已接收 ${fmtNum(d.total_ingested)} 条，最近 ${d.last_ingest_at || '-'}）`;
+          st.className = d.pending ? 'status-err' : 'status-ok';
+          st.textContent = d.pending
+            ? `已启用但 ${d.pending} 待确认（配置页点「测试连接」）`
+            : `已启用（已接收 ${fmtNum(d.total_ingested)} 条，最近 ${d.last_ingest_at || '-'}）`;
         } else {
           st.className = 'status-err';
           st.textContent = '未启用主题统计（配置页开启）';
@@ -1143,15 +1145,27 @@
     };
 
     // ---- 主题统计 ----
+    const showTopicPending = d => {
+      const row = $('topic-pending-row');
+      if (d.pending) {
+        row.style.display = '';
+        row.innerHTML = `⚠️ 配置完成但以下步骤响应超时（集群同步慢，资源可能已创建成功）：<b>${esc(d.pending)}</b><br>` +
+          `请点击「测试连接」由工具验证，或到 <b>EMQX Dashboard → 集成 → 连接器/规则</b> 查看真实状态。`;
+      } else {
+        row.style.display = 'none';
+        row.innerHTML = '';
+      }
+    };
     (async () => {
       try {
         const d = await api('/api/topic-config');
         $('topic-name').value = d.topic;
         $('topic-webhook-url').value = d.webhook_url || d.ingest_url;
         $('topic-webhook').textContent = d.webhook_url || d.ingest_url;
+        showTopicPending(d);
         if (d.enabled) {
-          $('topic-status').textContent = '已启用';
-          $('topic-status').style.color = '#2e7d32';
+          $('topic-status').textContent = '已启用' + (d.pending ? '（部分步骤待确认）' : '');
+          $('topic-status').style.color = d.pending ? '#e65100' : '#2e7d32';
           $('topic-total').textContent = fmtNum(d.total_ingested);
           $('topic-last').textContent = d.last_ingest_at || '-';
         } else {
@@ -1172,11 +1186,17 @@
         const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
         if (d.ok) {
           msg.className = 'form-msg ok';
-          msg.textContent = `已启用，统计主题 ${d.topic} /#（1 分钟后出数据）`;
-          $('topic-status').textContent = '已启用';
-          $('topic-status').style.color = '#2e7d32';
+          $('topic-status').textContent = d.pending ? '已启用（部分步骤待确认）' : '已启用';
+          $('topic-status').style.color = d.pending ? '#e65100' : '#2e7d32';
           $('topic-webhook').textContent = d.webhook_url;
           $('topic-webhook-url').value = d.webhook_url;
+          showTopicPending(d);
+          if (d.pending) {
+            msg.className = 'form-msg err';
+            msg.textContent = '配置完成，但部分步骤超时待确认（不阻塞统计）。请点击「测试连接」确认。';
+          } else {
+            msg.textContent = `已启用，统计主题 ${d.topic} /#（1 分钟后出数据）`;
+          }
         } else msg.textContent = d.error || '启用失败';
       } finally { $('topic-enable').disabled = false; }
     };
@@ -1190,7 +1210,41 @@
         msg.textContent = '已停用，规则引擎已从 EMQX 移除';
         $('topic-status').textContent = '未启用';
         $('topic-status').style.color = '#999';
+        showTopicPending({});
       } else msg.textContent = d.error || '停用失败';
+    };
+
+    // ---- 测试连接：验证 EMQX 侧四件套真实状态（集群超时后确认用）----
+    $('topic-test').onclick = async () => {
+      const btn = $('topic-test');
+      const res = $('topic-test-result');
+      btn.disabled = true;
+      res.className = 'form-msg';
+      res.textContent = '正在测试…';
+      try {
+        const d = await api('/api/topic-test');
+        if (!d.ok) { res.className = 'form-msg err'; res.textContent = d.error || '测试失败'; return; }
+        const s = d.status;
+        const conn = s.connector;
+        const mid = s.middleware;
+        const rule = s.rule;
+        const line = (ok, txt) => `<div>${ok ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">❌</span>'} ${txt}</div>`;
+        let html = '';
+        html += line(conn.exists, `连接器 emqx-monitor-ingest：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
+        html += line(mid.exists, `${s.v6 ? '动作' : '桥接'} ${s.v6 ? 'emqx-monitor-ingest-action' : 'emqx-monitor-bridge'}：${mid.exists ? '存在' : '不存在'}`);
+        html += line(rule.exists && rule.enabled, `规则 emqx-monitor-topic-rule：${rule.exists ? (rule.enabled ? '存在且已启用' : '存在但未启用') : '不存在'}`);
+        html += `<div style="margin-top:6px;color:${s.ok ? '#2e7d32' : '#e65100'};font-weight:600">${s.ok ? '✅ 链路正常，主题统计工作正常' : '❌ 链路不完整'}</div>`;
+        if (!s.ok) html += `<div style="color:#999;margin-top:4px">请到 EMQX Dashboard → 集成 → 连接器/规则 查看真实状态，或重新启用主题统计。${d.dashboard_hint || ''}</div>`;
+        res.innerHTML = html;
+        res.style.display = '';
+        // 测试通过后刷新状态显示（清除待确认）
+        if (s.ok) {
+          const c = await api('/api/topic-config');
+          showTopicPending(c);
+          if (c.enabled) { $('topic-status').textContent = '已启用'; $('topic-status').style.color = '#2e7d32'; }
+        }
+      } catch (e) { /* 401 */ }
+      finally { btn.disabled = false; }
     };
 
     // ---- 首次引导横幅 ----

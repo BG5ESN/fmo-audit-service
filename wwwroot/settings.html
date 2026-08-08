@@ -64,6 +64,7 @@
       <div class="kv">状态：<b id="topic-status">未启用</b></div>
       <div class="kv">已接收消息：<b id="topic-total">0</b> <span style="color:#999">（最后接收 <span id="topic-last">-</span>）</span></div>
       <div class="kv" style="margin-top:4px">Webhook 地址：<b id="topic-webhook" class="mono"></b></div>
+      <div class="kv" id="topic-pending-row" style="display:none;color:#e65100;line-height:1.7"></div>
       <div class="form-row" style="margin-top:10px">
         <label>统计主题（规则引擎按 主题/# 匹配，含子主题）</label>
         <input class="text-input" id="topic-name" placeholder="FMO/RAW">
@@ -75,8 +76,10 @@
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-primary" id="topic-enable">启用主题统计</button>
         <button class="btn" id="topic-disable">停用</button>
+        <button class="btn" id="topic-test">测试连接</button>
         <span id="topic-msg" class="form-msg" style="margin:0"></span>
       </div>
+      <div class="form-msg" id="topic-test-result" style="margin-top:8px;font-size:12px;line-height:1.8"></div>
       <div class="form-msg" id="topic-info" style="margin-top:10px;color:#999">启用后自动在 EMQX 上创建规则引擎（连接器 emqx-monitor-ingest + 规则），只统计该主题下的消息，其他主题不采集。</div>
     </div>
   </div>

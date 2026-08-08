@@ -373,25 +373,98 @@ public class EmqxClient
         return new CompatCheck { Name = name, Path = path, Ok = false, Note = $"访问失败: {resp.Error}（检查 API Key/网络）" };
     }
 
-    /// <summary>创建/更新主题统计规则引擎，自动适配 EMQX 版本（5.x bridge / 6.x action），幂等</summary>
-    public async Task<string?> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
+    /// <summary>创建/更新主题统计规则引擎，自动适配 EMQX 版本（5.x bridge / 6.x action），幂等。
+    /// 返回 (错误, 待确认步骤)：Error 仅真失败；Pending 非空 = 有步骤响应超时但资源可能已创建成功
+    /// （异地集群常见：操作成功但响应慢）——调用方应提示用户点「测试连接」或到 EMQX Dashboard 确认</summary>
+    public async Task<(string? Error, string? Pending)> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
         => await IsV6Async()
             ? await SetupTopicRuleV6Async(webhookUrl, token, topic)
             : await SetupTopicRuleV5Async(webhookUrl, token, topic);
+
+    /// <summary>执行配置步骤：超时 → 记入 pending（不中断流程），真失败 → 返回错误消息</summary>
+    private async Task<string?> StepAsync(List<string> pending, string stepName, Func<Task<(string? Error, string? Body)>> op)
+    {
+        var (err, _) = await op();
+        if (err == null) return null;
+        if (err.Contains("超时"))
+        {
+            pending.Add(stepName);
+            return null;
+        }
+        return $"{stepName}失败: {err}";
+    }
 
     /// <summary>删除主题统计规则引擎（适配版本），幂等</summary>
     public async Task<string?> RemoveTopicRuleAsync()
         => await IsV6Async() ? await RemoveTopicRuleV6Async() : await RemoveTopicRuleV5Async();
 
+    /// <summary>主题统计链路状态（「测试连接」按钮用）：connector / bridge|action / rule 四件套存在性与状态。
+    /// 集群场景配置可能超时但实际成功——以此查询为准，与 EMQX Dashboard 显示一致</summary>
+    public async Task<TopicRuleStatus> GetTopicRuleStatusAsync()
+    {
+        var status = new TopicRuleStatus();
+        var isV6 = await IsV6Async();
+        status.V6 = isV6;
+
+        // 1) connector
+        var conn = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 30);
+        status.ConnectorExists = conn.Error == null && conn.Body?.Contains($"\"name\":\"{TopicConnectorName}\"") == true;
+        if (status.ConnectorExists && conn.Body != null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(conn.Body);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String)
+                    status.ConnectorStatus = s.GetString();
+                if (root.TryGetProperty("status_reason", out var sr) && sr.ValueKind == JsonValueKind.String)
+                    status.ConnectorReason = sr.GetString();
+            }
+            catch { }
+        }
+
+        // 2) bridge(5.x) 或 action(6.x)
+        var midPath = isV6 ? $"/api/v5/actions/http:{TopicActionName}" : $"/api/v5/bridges/webhook:{TopicBridgeName}";
+        var midName = isV6 ? TopicActionName : TopicBridgeName;
+        var mid = await SendAsync(HttpMethod.Get, midPath, null, 30);
+        status.MiddlewareExists = mid.Error == null && mid.Body?.Contains($"\"name\":\"{midName}\"") == true;
+
+        // 3) rule
+        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
+        status.RuleExists = ruleId != null;
+        if (ruleId != null)
+        {
+            var rule = await SendAsync(HttpMethod.Get, $"/api/v5/rules/{ruleId}", null, 30);
+            if (rule.Error == null && rule.Body != null)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(rule.Body);
+                    status.RuleEnabled = doc.RootElement.TryGetProperty("enable", out var en) && en.ValueKind == JsonValueKind.True;
+                }
+                catch { }
+            }
+        }
+
+        // Ok 必须包含 connector 连接状态：exists 但 disconnected（EMQX 连不到 webhook）= 链路不通
+        status.Ok = status.ConnectorExists
+                    && status.ConnectorStatus == "connected"
+                    && status.MiddlewareExists
+                    && status.RuleExists
+                    && status.RuleEnabled == true;
+        return status;
+    }
+
     // ---------- 6.x 路径（实测 6.2.2）：connector → action → 规则引用 "http:{action}" ----------
     // 规则动作不能直接引用 connector（actions.discarded 计数），必须创建 action 实体。
     // action parameters.body 用 "${.}"（整个输出 JSON），payload 由 monitor 端 base64 解码算字节。
 
-    private async Task<string?> SetupTopicRuleV6Async(string webhookUrl, string token, string topic)
+    private async Task<(string? Error, string? Pending)> SetupTopicRuleV6Async(string webhookUrl, string token, string topic)
     {
         var uri = new Uri(webhookUrl);
         var baseUrl = uri.GetLeftPart(UriPartial.Authority);
         var path = uri.AbsolutePath;
+        var pending = new List<string>();
 
         // 1) 连接器（基础地址 + token headers）
         var connectorBody = JsonSerializer.Serialize(new
@@ -421,13 +494,13 @@ public class EmqxClient
         var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody, 60);
-            if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
+            var e = await StepAsync(pending, "更新连接器", () => SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody, 60));
+            if (e != null) return (e, null);
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60);
-            if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
+            var e = await StepAsync(pending, "创建连接器", () => SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60));
+            if (e != null) return (e, null);
         }
 
         // 2) action（egress：method/path/headers/body 模板）
@@ -469,17 +542,20 @@ public class EmqxClient
         var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null, 60);
         if (existingAction.Error == null && existingAction.Body != null && existingAction.Body.Contains($"\"name\":\"{TopicActionName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody, 60);
-            if (upd.Error != null) return $"更新动作失败: {upd.Error}";
+            var e = await StepAsync(pending, "更新动作", () => SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody, 60));
+            if (e != null) return (e, null);
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody, 60);
-            if (cre.Error != null) return $"创建动作失败: {cre.Error}";
+            var e = await StepAsync(pending, "创建动作", () => SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody, 60));
+            if (e != null) return (e, null);
         }
 
         // 3) 规则
-        return await UpsertTopicRuleAsync(topic, $"http:{TopicActionName}");
+        var ruleErr = await UpsertTopicRuleAsync(pending, topic, $"http:{TopicActionName}");
+        if (ruleErr != null) return (ruleErr, null);
+
+        return (null, pending.Count > 0 ? string.Join("、", pending) : null);
     }
 
     private async Task<string?> RemoveTopicRuleV6Async()
@@ -497,8 +573,9 @@ public class EmqxClient
     // 实测要点：规则 action 必须引用 bridge（引用 connector 校验通过但 actions 计数为 0/discarded）；
     // bridge body 必须模板化为完整 JSON；规则 SQL 不能用 length() 函数。
 
-    private async Task<string?> SetupTopicRuleV5Async(string webhookUrl, string token, string topic)
+    private async Task<(string? Error, string? Pending)> SetupTopicRuleV5Async(string webhookUrl, string token, string topic)
     {
+        var pending = new List<string>();
         var connectorBody = JsonSerializer.Serialize(new
         {
             type = "http",
@@ -520,13 +597,13 @@ public class EmqxClient
         var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody, 60);
-            if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
+            var e = await StepAsync(pending, "更新连接器", () => SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody, 60));
+            if (e != null) return (e, null);
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60);
-            if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
+            var e = await StepAsync(pending, "创建连接器", () => SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60));
+            if (e != null) return (e, null);
         }
 
         // 2) bridge v2：平铺 url/method/headers/body（实测 required: url）
@@ -550,17 +627,20 @@ public class EmqxClient
         var existingBridge = await SendAsync(HttpMethod.Get, $"/api/v5/bridges/{bridgeId}", null, 60);
         if (existingBridge.Error == null && existingBridge.Body != null && existingBridge.Body.Contains($"\"name\":\"{TopicBridgeName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody, 60);
-            if (upd.Error != null) return $"更新桥接失败: {upd.Error}";
+            var e = await StepAsync(pending, "更新桥接", () => SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody, 60));
+            if (e != null) return (e, null);
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody, 60);
-            if (cre.Error != null) return $"创建桥接失败: {cre.Error}";
+            var e = await StepAsync(pending, "创建桥接", () => SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody, 60));
+            if (e != null) return (e, null);
         }
 
         // 3) 规则
-        return await UpsertTopicRuleAsync(topic, $"webhook:{TopicBridgeName}");
+        var ruleErr = await UpsertTopicRuleAsync(pending, topic, $"webhook:{TopicBridgeName}");
+        if (ruleErr != null) return (ruleErr, null);
+
+        return (null, pending.Count > 0 ? string.Join("、", pending) : null);
     }
 
     private async Task<string?> RemoveTopicRuleV5Async()
@@ -580,7 +660,7 @@ public class EmqxClient
 
     /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题；client_attrs 用于 6.x 自动带出 callsign；
     /// base64_encode(payload)：二进制 payload 必须 base64 才能无损嵌入 webhook JSON——直接内嵌原始字节会破坏 JSON 导致消息被丢弃）</summary>
-    private async Task<string?> UpsertTopicRuleAsync(string topic, string actionRef)
+    private async Task<string?> UpsertTopicRuleAsync(List<string> pending, string topic, string actionRef)
     {
         var ruleSql = $"SELECT clientid, username, topic, base64_encode(payload) as payload, qos, timestamp, client_attrs FROM \"{topic}/#\"";
         var ruleBody = JsonSerializer.Serialize(new
@@ -594,13 +674,13 @@ public class EmqxClient
         var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
         if (ruleId != null)
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody, 60);
-            if (upd.Error != null) return $"更新规则失败: {upd.Error}";
+            var e = await StepAsync(pending, "更新规则", () => SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody, 60));
+            if (e != null) return e;
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody, 60);
-            if (cre.Error != null) return $"创建规则失败: {cre.Error}";
+            var e = await StepAsync(pending, "创建规则", () => SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody, 60));
+            if (e != null) return e;
         }
         return null;
     }
@@ -800,6 +880,19 @@ public class BannedEntry
     public string? Reason { get; init; }
     public string? Until { get; init; }   // RFC3339 或 "infinity"（永久）
     public string? By { get; init; }
+}
+
+/// <summary>主题统计链路状态（测试连接用）</summary>
+public class TopicRuleStatus
+{
+    public bool V6 { get; set; }
+    public bool ConnectorExists { get; set; }
+    public string? ConnectorStatus { get; set; }    // connected / connecting / disconnected
+    public string? ConnectorReason { get; set; }
+    public bool MiddlewareExists { get; set; }      // 5.x bridge / 6.x action
+    public bool RuleExists { get; set; }
+    public bool? RuleEnabled { get; set; }
+    public bool Ok { get; set; }
 }
 
 public class ClientsResult
