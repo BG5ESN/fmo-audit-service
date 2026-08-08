@@ -636,9 +636,11 @@ public class EmqxClient
         if (!string.IsNullOrEmpty(connStep)) failed.Add(connStep);
 
         // 2) bridge v2：平铺 url/method/headers/body（实测 required: url）
+        // ⚠️ type 必须用 "webhook"：5.8.9 起运行时移除 "http" bridge 类型（swagger enum 残留但创建报 unknown bridge type，
+        //    实测 5.8.9 probe: http→400 / webhook→204；5.8.6 两种都接受）——用 webhook 双版本兼容
         var bridgeBody = JsonSerializer.Serialize(new
         {
-            type = "http",
+            type = "webhook",
             name = TopicBridgeName,
             description = "EMQX Monitor topic bridge",
             url = webhookUrl,
