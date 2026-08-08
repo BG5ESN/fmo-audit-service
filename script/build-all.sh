@@ -41,8 +41,8 @@ command -v dotnet >/dev/null 2>&1 || { echo "[!] 未找到 dotnet，请先安装
 git diff --quiet || { echo "[!] 工作区有未提交改动，请先 commit 再编译（发布必须可追溯）"; exit 1; }
 
 # ---- 版本写入 csproj：程序集版本 = 发布版本（OTA CurrentVersion 读程序集版本）----
-if ! grep -q "<Version>${VER}</Version>" emqx-monitor.csproj; then
-  sed -i "s|<Version>[^<]*</Version>|<Version>${VER}</Version>|" emqx-monitor.csproj
+if ! grep -q "<Version>${VER}</Version>" fmo-audit-service.csproj; then
+  sed -i "s|<Version>[^<]*</Version>|<Version>${VER}</Version>|" fmo-audit-service.csproj
   echo "== 版本已写入 csproj: $VER（请随发布一起提交）=="
 else
   echo "== csproj 版本已是 $VER，无需更新 =="
@@ -95,7 +95,7 @@ echo ""
 echo "== 完成 =="
 ls -la "$DIST/" | grep -v "^total"
 echo "日志: $LOG"
-echo "提示: 提交版本号变更 → git add emqx-monitor.csproj && git commit -m \"bump: v$VER\""
+echo "提示: 提交版本号变更 → git add fmo-audit-service.csproj && git commit -m \"bump: v$VER\""
 
 # ---- 可选: 打 git tag ----
 if [ "$DO_TAG" = "tag" ]; then

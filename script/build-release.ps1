@@ -67,10 +67,8 @@ foreach ($RID in $Plats) {
         tar czf "$Dist/fmo-audit-service-v$Version-$RID.tar.gz" -C $stage .
     }
     else {
-        # Linux 系: 二进制 + deploy 脚本 + systemd 模板 + README → tar.gz
+        # Linux 系: 二进制 + README → tar.gz
         Copy-Item "publish/$RID/fmo-audit-service" $stage/
-        Copy-Item deploy/fmo-audit-service.service $stage/
-        Copy-Item deploy-linux.sh $stage/
         Copy-Item README.md $stage/
         tar czf "$Dist/fmo-audit-service-v$Version-$RID.tar.gz" -C $stage .
     }

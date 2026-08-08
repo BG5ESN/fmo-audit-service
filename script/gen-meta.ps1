@@ -83,7 +83,7 @@ if ($count -eq 0) {
 # ── 生成元数据（UTF-8 无 BOM：PowerShell 5.1 Out-File 默认 UTF-16，必须显式）──
 $meta = [ordered]@{ version = $Version }
 if ($Notes) { $meta.notes = $Notes }
-$meta.url = 'https://github.com/BG5ESN/fmo-server-authrozier-service'
+$meta.url = 'https://github.com/BG5ESN/fmo-audit-service'
 $meta.assets = $assets
 
 $json = $meta | ConvertTo-Json -Depth 3
