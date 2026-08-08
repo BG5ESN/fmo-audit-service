@@ -82,13 +82,12 @@ ARCHIVE="$TMPDIR_INSTALL/fas.tar.gz"
 # 传输完整性由 HTTPS/TLS 保障，官方源可信，无需额外哈希
 curl -fL --progress-bar "$DOWNLOAD_URL" -o "$ARCHIVE"
 
-mkdir -p "$TMPDIR_INSTALL"
-# 下载的是 build-all 产物（裸单文件），直接使用
-BIN_FILE="$TMPDIR_INSTALL/fmo-audit-service"
-cp "$ARCHIVE" "$BIN_FILE"
-chmod +x "$BIN_FILE"
+mkdir -p "$TMPDIR_INSTALL/extract"
+# 下载的是 tar.gz 包（build-all 产物，对齐 SAS），解压找主程序
+tar xzf "$ARCHIVE" -C "$TMPDIR_INSTALL/extract"
+BIN_FILE="$TMPDIR_INSTALL/extract/fmo-audit-service"
 if [ ! -f "$BIN_FILE" ] || [ ! -x "$BIN_FILE" ]; then
-    err "下载产物异常，无法执行"
+    err "下载包异常，未找到 fmo-audit-service 主程序"
     exit 1
 fi
 

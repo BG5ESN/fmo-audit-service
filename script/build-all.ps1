@@ -62,8 +62,28 @@ foreach ($RID in $Platforms.Split(',')) {
         exit 1
     }
 
-    $Out = "$Dist/fmo-audit-service-$RID"
-    Copy-Item $Bin $Out -Force
+    # 打包（Linux/macOS → tar.gz，Windows → zip），本地固定名（对齐 SAS）
+    $Stage = Join-Path $env:TEMP "fas-rel-$RID"
+    if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+    Copy-Item $Bin $Stage -Force
+
+    if ($RID -eq "win-x64") {
+        $Out = "$Dist/fmo-audit-service-$RID.zip"
+        Compress-Archive -Path "$Stage\*" -DestinationPath (Join-Path (Get-Location) $Out) -Force
+    } else {
+        $Out = "$Dist/fmo-audit-service-$RID.tar.gz"
+        $OutAbs = Join-Path (Get-Location) $Out   # 绝对路径（Push-Location 后相对路径会错）
+        Push-Location $Stage
+        & tar -czf $OutAbs * 2>$null
+        $tarCode = $LASTEXITCODE
+        Pop-Location
+        if ($tarCode -ne 0) {
+            Write-Host "[!] tar 打包失败（Windows 需 Git Bash/WSL 提供的 tar）" -ForegroundColor Red
+            exit 1
+        }
+    }
+    Remove-Item $Stage -Recurse -Force
     $Hash = (Get-FileHash $Out -Algorithm SHA256).Hash.ToLower()
     Set-Content -Path "$Out.sha256" -Value "$Hash  $Out" -Encoding ASCII
     $Size = [Math]::Round((Get-Item $Out).Length / 1MB, 1)

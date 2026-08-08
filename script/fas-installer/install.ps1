@@ -32,12 +32,16 @@ Write-Host "[2/4] 下载..."
 $zip = Join-Path $tmp "fas.zip"
 Invoke-WebRequest -Uri $asset.url -OutFile $zip -TimeoutSec 120
 
-# STEP 2: 安装（产物是裸单文件 exe；传输完整性由 HTTPS/TLS 保障）
+# STEP 2: 解压 + 安装（产物是 zip 包，对齐 SAS）
 Write-Host "[3/4] 安装到 $InstallDir ..."
-$exePath = Join-Path $tmp "fmo-audit-service.exe"
-Move-Item $zip $exePath -Force
+Expand-Archive $zip -DestinationPath $tmp -Force
+$exe = Get-ChildItem $tmp -Recurse -Filter "fmo-audit-service.exe" | Select-Object -First 1
+if (-not $exe) {
+    Write-Host "[!] 下载包中未找到 fmo-audit-service.exe" -ForegroundColor Red
+    exit 1
+}
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item $exePath (Join-Path $InstallDir "fmo-audit-service.exe") -Force
+Copy-Item $exe.FullName (Join-Path $InstallDir "fmo-audit-service.exe") -Force
 
 # STEP 3: 服务注册（NSSM 可选）
 Write-Host "[4/4] 服务注册..."

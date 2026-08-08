@@ -21,6 +21,7 @@ curl -fsSL https://bg5esn.com/share/fmo/fas-installer/install.sh | sudo bash
 - 二进制 → `/opt/fmo-fas/fmo-audit-service`（专用低权限用户 `fmo-audit` 运行）
 - 数据库 → `/opt/fmo-fas/fmo-audit-service.db`
 - 系统服务 → `fmo-fas.service`（开机自启，`Restart=on-failure`——OTA 更新自动重启）
+- 发布物格式：tar.gz/zip 包（与 SAS 一致），OTA 元数据 URL 带版本目录
 
 ### 首次配置
 

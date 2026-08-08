@@ -32,7 +32,7 @@ echo "== FMO Audit Service 多平台单文件编译 v$VER =="
 echo "平台: ${PLATFORMS//,/, }"
 echo "（树莓派 32 位用 linux-arm，64 位用 linux-arm64）"
 
-# ---- 逐平台 publish（单文件自包含）----
+# ---- 逐平台 publish（单文件自包含）+ 打包（tar.gz/zip，对齐 SAS）----
 for RID in ${PLATFORMS//,/ }; do
   echo "== [$RID] dotnet publish 单文件 =="
   dotnet publish -c Release -r "$RID" --self-contained true \
@@ -44,9 +44,26 @@ for RID in ${PLATFORMS//,/ }; do
   [ "$RID" = "win-x64" ] && BIN="$BIN.exe"
   [ -f "$BIN" ] || { echo "[!] $RID 产物缺失: $BIN，日志: $LOG"; exit 1; }
 
-  OUT="$DIST/fmo-audit-service-${RID}"
-  cp "$BIN" "$OUT"
-  chmod +x "$OUT" 2>/dev/null || true
+  # 打包（Linux/macOS → tar.gz，Windows → zip），本地固定名
+  STAGE="/tmp/fas-rel-$RID"
+  rm -rf "$STAGE" && mkdir -p "$STAGE"
+  cp "$BIN" "$STAGE/"
+  if [ "$RID" = "win-x64" ]; then
+    OUT="$DIST/fmo-audit-service-${RID}.zip"
+    python3 - "$OUT" "$STAGE" <<'EOF'
+import sys, zipfile, os
+out, src = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk(src):
+        for f in files:
+            p = os.path.join(root, f)
+            z.write(p, os.path.relpath(p, src))
+EOF
+  else
+    OUT="$DIST/fmo-audit-service-${RID}.tar.gz"
+    tar czf "$OUT" -C "$STAGE" .
+  fi
+  rm -rf "$STAGE"
   sha256sum "$OUT" > "$OUT.sha256"
   echo "  ✓ $OUT ($(du -h "$OUT" | cut -f1))"
 done
