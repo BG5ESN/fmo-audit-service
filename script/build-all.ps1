@@ -22,6 +22,7 @@ if (-not $Version) {
     $desc = & git describe --tags --always 2>$null
     $Version = if ($desc) { $desc } else { "1.0.0" }
 }
+$Version = $Version.TrimStart('v')   # 去掉 v 前缀（git describe 返回 v2.0.2）
 $Dist = "dist"
 $Log = Join-Path $env:TEMP "fmo-build-all-$([DateTime]::Now.Ticks).log"
 

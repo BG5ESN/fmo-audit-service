@@ -15,6 +15,7 @@ cd "$(dirname "$0")/.."          # 切到项目根目录
 
 # ---- 版本 / 平台 / 路径 ----
 VER="${1:-$(git describe --tags --always 2>/dev/null || echo 1.0.0)}"
+VER="${VER#v}"          # 去掉 v 前缀（git describe 返回 v2.0.2）
 DO_TAG="${2:-}"
 PLATFORMS="${PLATFORMS:-linux-x64,linux-arm64,linux-arm,osx-x64,osx-arm64,win-x64}"
 DIST="dist"
