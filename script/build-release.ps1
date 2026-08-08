@@ -21,6 +21,11 @@ $ErrorActionPreference = "Stop"
 $ProjRoot = Split-Path $PSScriptRoot -Parent
 Set-Location $ProjRoot
 
+# ---- 清空构建产物: 防止残留 publish 目录被重复拷贝嵌套(曾导致 bin\...\publish\...\publish 无限加深) ----
+foreach ($D in @("bin", "obj", "publish")) {
+    if (Test-Path $D) { Remove-Item $D -Recurse -Force }
+}
+
 # ---- 前置检查 ----
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Write-Host "[!] 未找到 dotnet，请先安装 .NET SDK"; exit 1 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue))     { Write-Host "[!] 未找到 git"; exit 1 }
@@ -42,7 +47,7 @@ foreach ($RID in $Plats) {
     Write-Host "== [发布] $RID =="
     dotnet publish -c Release -r $RID --self-contained true `
       -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-      -o "publish/$RID" *>> $Log
+      -o (Join-Path $ProjRoot "publish/$RID") *>> $Log
     if ($LASTEXITCODE -ne 0) { Write-Host "[!] $RID 发布失败，查看 $Log"; exit 1 }
 
     $stage = Join-Path $tmp $RID

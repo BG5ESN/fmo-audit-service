@@ -12,6 +12,10 @@
 # ============================================================
 set -e
 cd "$(dirname "$0")/.."          # 切到项目根目录
+OUTBASE="$(pwd)/publish"          # 绝对路径: 防止在发布目录内运行导致输出嵌套
+
+# ---- 清空构建产物: 防止残留 publish 目录被重复拷贝嵌套(曾导致 bin/.../publish/.../publish 无限加深) ----
+rm -rf bin obj publish
 
 # ---- 版本 / 平台 / 路径 ----
 VER="${1:-$(git describe --tags --always 2>/dev/null || echo 1.0.0)}"
@@ -38,7 +42,7 @@ for RID in ${PLATFORMS//,/ }; do
   dotnet publish -c Release -r "$RID" --self-contained true \
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
     -p:DebugType=None -p:DebugSymbols=false \
-    -o "publish/$RID" >> "$LOG" 2>&1 || { echo "[!] $RID 发布失败，日志: $LOG"; exit 1; }
+    -o "$OUTBASE/$RID" >> "$LOG" 2>&1 || { echo "[!] $RID 发布失败，日志: $LOG"; exit 1; }
 
   BIN="publish/$RID/fmo-audit-service"
   [ "$RID" = "win-x64" ] && BIN="$BIN.exe"

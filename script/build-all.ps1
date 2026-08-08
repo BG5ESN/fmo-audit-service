@@ -16,6 +16,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")    # 切到项目根目录
+$ProjRoot = Get-Location
+
+# ---- 清空构建产物: 防止残留 publish 目录被重复拷贝嵌套(曾导致 bin\...\publish\...\publish 无限加深) ----
+foreach ($D in @("bin", "obj", "publish")) {
+    if (Test-Path $D) { Remove-Item $D -Recurse -Force }
+}
 
 # ---- 版本 ----
 if (-not $Version) {
@@ -49,7 +55,7 @@ foreach ($RID in $Platforms.Split(',')) {
     & dotnet publish -c Release -r $RID --self-contained true `
         -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
         -p:DebugType=None -p:DebugSymbols=false `
-        -o "publish/$RID" *>> $Log
+        -o (Join-Path $ProjRoot "publish/$RID") *>> $Log
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[!] $RID 发布失败，日志: $Log" -ForegroundColor Red
         exit 1

@@ -12,6 +12,9 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <!-- SDK 默认只排除 bin\Debug/obj\Debug; 若不排除 bin\obj\publish\dist,
+         默认项 glob(**/*) 会递归遍历发布产物嵌套目录, 导致评估阶段 FileMatcher 无限递归卡死 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**;publish/**;dist/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
