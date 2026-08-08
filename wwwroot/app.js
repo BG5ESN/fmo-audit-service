@@ -1103,6 +1103,62 @@
     $('ic-enable').onclick = () => setIc(true);
     $('ic-disable').onclick = () => setIc(false);
 
+    // ---- 版本与更新（OTA）----
+    const upModeTxt = { self: '裸机/服务部署（支持自更新）', docker: 'Docker 容器（不支持自更新）', manual: '手动部署' };
+    async function upCheck() {
+      const msg = $('up-msg');
+      msg.className = 'form-msg';
+      msg.textContent = '检查中…';
+      try {
+        const d = await api('/api/update/check');
+        $('up-current').textContent = d.current;
+        const lr = $('up-latest-row'), mr = $('up-mode-row'), dh = $('up-docker-hint');
+        lr.style.display = '';
+        lr.innerHTML = `最新版本：<b>${d.latest || '-'}</b>`;
+        mr.style.display = '';
+        mr.innerHTML = `部署模式：<b>${upModeTxt[d.update_mode] || d.update_mode}</b>`;
+        if (d.docker_hint) { dh.style.display = ''; dh.textContent = '⚠️ ' + d.docker_hint; }
+        else dh.style.display = 'none';
+        if (d.error) { msg.className = 'form-msg err'; msg.textContent = d.error; }
+        else if (d.has_update && d.update_mode !== 'docker') {
+          $('up-apply').style.display = '';
+          msg.className = 'form-msg ok';
+          msg.textContent = `发现新版本 v${d.latest}，可立即更新`;
+        } else {
+          $('up-apply').style.display = 'none';
+          msg.className = 'form-msg';
+          msg.textContent = '已是最新版本';
+        }
+      } catch (e) { /* 401 */ }
+    }
+    $('up-check').onclick = upCheck;
+    $('up-apply').onclick = async () => {
+      if (!confirm('确认更新到最新版本？更新期间服务将自动重启（约 10 秒），页面会短暂中断。')) return;
+      const msg = $('up-msg'), prog = $('up-progress');
+      msg.className = 'form-msg';
+      msg.textContent = '正在下载并校验…';
+      prog.textContent = '（大版本下载可能需要 1-2 分钟，请勿关闭页面）';
+      $('up-apply').disabled = true;
+      try {
+        const d = await api('/api/update/apply', { method: 'POST' });
+        if (d.ok) {
+          msg.className = 'form-msg ok';
+          msg.textContent = d.message || '更新中，服务将自动重启';
+          prog.textContent = '服务重启后（约 10 秒）请刷新页面查看新版本号';
+          setTimeout(() => { location.reload(); }, 12000);
+        } else {
+          msg.className = 'form-msg err';
+          msg.textContent = d.error || '更新失败';
+          $('up-apply').disabled = false;
+        }
+      } catch (e) {
+        // 更新成功时进程退出可能导致连接中断——静默等待自动刷新
+        prog.textContent = '服务正在重启，请稍后刷新页面…';
+        setTimeout(() => { location.reload(); }, 12000);
+      }
+    };
+    upCheck();
+
     (async () => {
       try {
         const d = await api('/api/config');

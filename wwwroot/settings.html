@@ -159,6 +159,22 @@
   </div>
 
   <div class="config-section">
+    <div class="config-section-title">版本与更新（OTA）</div>
+    <div class="config-section-body">
+      <div class="kv">当前版本：<b id="up-current">加载中…</b></div>
+      <div class="kv" id="up-latest-row" style="display:none"></div>
+      <div class="kv" id="up-mode-row" style="display:none"></div>
+      <div class="kv" id="up-docker-hint" style="display:none;color:#e65100;line-height:1.7"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button class="btn" id="up-check">检查更新</button>
+        <button class="btn btn-primary" id="up-apply" style="display:none">立即更新</button>
+        <span id="up-msg" class="form-msg" style="margin:0"></span>
+      </div>
+      <div class="form-msg" id="up-progress" style="margin-top:8px;font-size:12px;color:#666"></div>
+    </div>
+  </div>
+
+  <div class="config-section">
     <div class="config-section-title">运行信息</div>
     <div class="config-section-body">
       <div class="kv">监听端口：<b id="run-port"></b></div>

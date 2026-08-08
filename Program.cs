@@ -6,6 +6,26 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 
+// ---- CLI 命令：--check 检查更新 / --update 执行更新（手动升级，替换后提示重启服务）----
+if (args.Contains("--check") || args.Contains("--update"))
+{
+    if (args.Contains("--update"))
+    {
+        var (err, msg) = await UpdateService.ApplyAsync();
+        Console.WriteLine(err ?? msg ?? "");
+        if (err != null) { Environment.Exit(1); return; }
+        Console.WriteLine("二进制已替换。若以服务运行，请执行: systemctl restart fmo-fas");
+        Environment.Exit(0);
+        return;
+    }
+    var (cur, latest, has, cerr) = await UpdateService.CheckAsync();
+    Console.WriteLine($"FMO Audit Service version: {cur}");
+    if (cerr != null) { Console.WriteLine(cerr); Environment.Exit(1); return; }
+    Console.WriteLine(has ? $"发现新版本 v{latest}！执行 fmo-audit-service --update 更新" : $"已是最新版本 v{latest}");
+    Environment.Exit(0);
+    return;
+}
+
 // ---- 配置：端口（环境变量优先，默认 9527）----
 var port = int.TryParse(Environment.GetEnvironmentVariable("EMQX_MONITOR_PORT"), out var envPort) ? envPort : 9527;
 
@@ -788,6 +808,44 @@ app.MapGet("/api/audit-packets", (string from, string to, string? verdict, int? 
     var rows = database.QueryAuditPackets(f, t, verdict, Math.Clamp(limit ?? 200, 1, 1000));
     var counts = database.CountAuditVerdicts(f, t);
     return Results.Json(new { ok = true, from = f, to = t, rows, counts });
+});
+
+// ---- 版本与更新（OTA）----
+
+// GET /api/update/check — 检查更新（当前/最新/模式）
+app.MapGet("/api/update/check", async () =>
+{
+    var mode = UpdateService.DetectMode();
+    var (cur, latest, has, err) = await UpdateService.CheckAsync();
+    return Results.Json(new
+    {
+        ok = true,
+        current = cur,
+        latest,
+        has_update = has,
+        update_mode = UpdateService.ModeName(mode),
+        docker_hint = mode == UpdateMode.Docker
+            ? "当前为 Docker 部署，不支持自更新。请使用: docker pull 新镜像 && docker compose up -d"
+            : null,
+        error = err,
+    });
+});
+
+// POST /api/update/apply — 执行更新（下载+sha256 校验+替换，成功后服务自动退出由 systemd 拉起）
+app.MapPost("/api/update/apply", async (HttpContext ctx) =>
+{
+    if (UpdateService.DetectMode() == UpdateMode.Docker)
+        return Results.Json(new { ok = false, error = "容器内不支持自更新，请使用 docker pull 更新镜像" });
+
+    var (err, msg) = await UpdateService.ApplyAsync();
+    if (err != null)
+        return Results.Json(new { ok = false, error = err });
+
+    // 先返回响应，再延迟退出进程 → systemd Restart=on-failure 自动拉起新版本
+    await ctx.Response.WriteAsJsonAsync(new { ok = true, message = msg ?? "更新中，服务将自动重启" });
+    await ctx.Response.Body.FlushAsync();
+    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(0); });
+    return Results.Empty;
 });
 
 // ---- 数据管理 ----
