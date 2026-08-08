@@ -1163,6 +1163,24 @@
         $('topic-webhook-url').value = d.webhook_url || d.ingest_url;
         $('topic-webhook').textContent = d.webhook_url || d.ingest_url;
         showTopicPending(d);
+        // 本机 IP 快速选择按钮（Linux 多网卡多 IP 场景）
+        const pick = $('ip-quick-pick');
+        if (pick && d.local_ips && d.local_ips.length) {
+          const port = new URL(d.ingest_url || location.origin).port || '9527';
+          d.local_ips.forEach(ip => {
+            const b = document.createElement('button');
+            b.className = 'chip';
+            b.textContent = ip + ':' + port;
+            b.title = '填入 http://' + ip + ':' + port + '/api/ingest';
+            b.onclick = () => {
+              $('topic-webhook-url').value = `http://${ip}:${port}/api/ingest`;
+              const hint = $('topic-msg');
+              hint.className = 'form-msg';
+              hint.textContent = `已填入 ${ip}:${port}（EMQX 节点需能访问该地址）`;
+            };
+            pick.appendChild(b);
+          });
+        }
         if (d.enabled) {
           $('topic-status').textContent = '已启用' + (d.pending ? '（部分步骤待确认）' : '');
           $('topic-status').style.color = d.pending ? '#e65100' : '#2e7d32';
@@ -1180,6 +1198,22 @@
       const webhookUrl = $('topic-webhook-url').value.trim();
       const msg = $('topic-msg');
       msg.className = 'form-msg err';
+      // 智能网段提示：webhook 是内网 IP 而 EMQX 是公网地址 → 异地节点可能无法上报
+      try {
+        const cfg = await api('/api/config');
+        const emqxHost = (cfg.emqx_url || '').replace(/^https?:\/\//, '').split(/[/:]/)[0];
+        const whHost = (webhookUrl || '').replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+        const isPriv = h => {
+          const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h || '');
+          if (!m) return null;
+          const a = +m[1], b = +m[2];
+          return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 127;
+        };
+        if (whHost && emqxHost && isPriv(whHost) === true && isPriv(emqxHost) !== true) {
+          msg.textContent = `⚠️ Webhook 是内网地址（${whHost}），而 EMQX 地址是公网（${emqxHost}）——异地节点可能无法上报。请确认 Webhook 地址对所有 EMQX 节点可见，或改用上方公网地址。`;
+          return;
+        }
+      } catch (e) { /* 配置未就绪时跳过提示 */ }
       msg.textContent = '正在配置 EMQX 规则引擎…';
       $('topic-enable').disabled = true;
       try {

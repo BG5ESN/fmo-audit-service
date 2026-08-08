@@ -480,6 +480,7 @@ app.MapGet("/api/topic-config", () => Results.Json(new
     topic = db.GetSetting("topic_name") ?? "FMO/RAW",
     webhook_url = db.GetSetting("topic_webhook_url") ?? "",
     ingest_url = $"http://{GetLanIp()}:{port}/api/ingest",
+    local_ips = GetAllLocalIps(),   // 本机所有 IP（Webhook 快速配置按钮）
     total_ingested = topicIngest.TotalIngested,
     last_ingest_at = topicIngest.LastIngestAt == default ? null : topicIngest.LastIngestAt.ToString("yyyy-MM-dd HH:mm:ss"),
     ingest_token = topicIngest.GetToken(db),
@@ -615,6 +616,28 @@ static string GetLanIp()
     {
         return "127.0.0.1";
     }
+}
+
+// 本机所有非回环 IPv4（Webhook 快速配置用：Linux 多网卡常见多 IP，如 eth0/eth1/docker0）
+static List<string> GetAllLocalIps()
+{
+    var list = new List<string>();
+    try
+    {
+        foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+            foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+            {
+                if (addr.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                var ip = addr.Address.ToString();
+                if (ip.StartsWith("127.") || ip.StartsWith("169.254.")) continue;   // 回环 / 链路本地
+                if (!list.Contains(ip)) list.Add(ip);
+            }
+        }
+    }
+    catch { }
+    return list;
 }
 
 // ---- 兼容性自检 ----

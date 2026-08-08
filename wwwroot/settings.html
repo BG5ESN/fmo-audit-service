@@ -70,8 +70,15 @@
         <input class="text-input" id="topic-name" placeholder="FMO/RAW">
       </div>
       <div class="form-row">
-        <label>Webhook 地址（EMQX 能访问到的本服务地址，默认自动生成）</label>
+        <label>Webhook 地址（EMQX 规则引擎主动上报到本工具的接口，必须对 EMQX 所有节点可见）</label>
         <input class="text-input" id="topic-webhook-url" placeholder="http://服务器IP:9527/api/ingest">
+      </div>
+      <div id="ip-quick-pick" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div style="font-size:12px;color:#666;line-height:1.8;margin-bottom:10px;background:#fafafa;border:1px solid #e5e5e5;padding:8px 10px">
+        <b>数据流向</b>：主题统计由 EMQX 规则引擎<b>主动上报</b>到本工具（Webhook 推送），而非本工具去 EMQX 查询——因此 Webhook 地址必须对 EMQX 所有节点可见。
+        <br>· <b>同局域网</b>：用上方 IP 按钮快速选择本机地址即可
+        <br>· <b>异地集群</b>：需手动改为所有节点可达的地址（公网域名或 IP:port），否则节点无法上报、主题统计无数据
+        <br>· <b>公网地址</b>：建议套 HTTPS 反代并在反代层限制来源（仅允许 EMQX 节点 IP）
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-primary" id="topic-enable">启用主题统计</button>
