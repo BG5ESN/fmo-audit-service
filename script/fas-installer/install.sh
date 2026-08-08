@@ -51,8 +51,9 @@ OS=$(uname -s); ARCH=$(uname -m)
 case "$OS-$ARCH" in
     Linux-x86_64)  RID="linux-x64" ;;
     Linux-aarch64) RID="linux-arm64" ;;
+    Linux-armv7l|Linux-armv6l) RID="linux-arm" ;;   # 树莓派 32 位系统
     *)
-        err "不支持的平台: $OS $ARCH（支持 linux-x64 / linux-arm64）"
+        err "不支持的平台: $OS $ARCH（支持 linux-x64 / linux-arm64 / linux-arm）"
         exit 1 ;;
 esac
 info "[1/5] 检测平台... $OS $ARCH -> $RID"
