@@ -418,15 +418,15 @@ public class EmqxClient
             },
             enable = true
         });
-        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody, 60);
             if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody);
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60);
             if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
         }
 
@@ -466,15 +466,15 @@ public class EmqxClient
                 body = "${.}"
             }
         });
-        var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null);
+        var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null, 60);
         if (existingAction.Error == null && existingAction.Body != null && existingAction.Body.Contains($"\"name\":\"{TopicActionName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody, 60);
             if (upd.Error != null) return $"更新动作失败: {upd.Error}";
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody);
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody, 60);
             if (cre.Error != null) return $"创建动作失败: {cre.Error}";
         }
 
@@ -486,9 +486,9 @@ public class EmqxClient
     {
         var err = await DeleteTopicRuleAsync();
         if (err != null) return err;
-        var adel = await SendAsync(HttpMethod.Delete, $"/api/v5/actions/http:{TopicActionName}", null);
+        var adel = await SendAsync(HttpMethod.Delete, $"/api/v5/actions/http:{TopicActionName}", null, 60);
         if (IsNotFound(adel.Error)) return $"删除动作失败: {adel.Error}";
-        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
         return null;
     }
@@ -513,19 +513,19 @@ public class EmqxClient
             enable = true,
             pool_size = 8,
             enable_pipelining = 100,
-            connect_timeout = "15s"
+            connect_timeout = "30s"
         });
 
         // 1) 连接器：存在则更新，否则创建
-        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorBody, 60);
             if (upd.Error != null) return $"更新连接器失败: {upd.Error}";
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody);
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60);
             if (cre.Error != null) return $"创建连接器失败: {cre.Error}";
         }
 
@@ -547,15 +547,15 @@ public class EmqxClient
             max_retries = 2
         });
         var bridgeId = $"webhook:{TopicBridgeName}";
-        var existingBridge = await SendAsync(HttpMethod.Get, $"/api/v5/bridges/{bridgeId}", null);
+        var existingBridge = await SendAsync(HttpMethod.Get, $"/api/v5/bridges/{bridgeId}", null, 60);
         if (existingBridge.Error == null && existingBridge.Body != null && existingBridge.Body.Contains($"\"name\":\"{TopicBridgeName}\""))
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody, 60);
             if (upd.Error != null) return $"更新桥接失败: {upd.Error}";
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody);
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody, 60);
             if (cre.Error != null) return $"创建桥接失败: {cre.Error}";
         }
 
@@ -567,9 +567,9 @@ public class EmqxClient
     {
         var err = await DeleteTopicRuleAsync();
         if (err != null) return err;
-        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null);
+        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null, 60);
         if (IsNotFound(bdel.Error)) return $"删除桥接失败: {bdel.Error}";
-        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null);
+        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
         if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
         return null;
     }
@@ -594,12 +594,12 @@ public class EmqxClient
         var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
         if (ruleId != null)
         {
-            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody);
+            var upd = await SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody, 60);
             if (upd.Error != null) return $"更新规则失败: {upd.Error}";
         }
         else
         {
-            var cre = await SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody);
+            var cre = await SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody, 60);
             if (cre.Error != null) return $"创建规则失败: {cre.Error}";
         }
         return null;
@@ -611,7 +611,7 @@ public class EmqxClient
         var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
         if (ruleId != null)
         {
-            var del = await SendAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}", null);
+            var del = await SendAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}", null, 60);
             if (del.Error != null) return $"删除规则失败: {del.Error}";
         }
         return null;
@@ -620,7 +620,7 @@ public class EmqxClient
     /// <summary>按名称查找规则 ID</summary>
     private async Task<string?> FindRuleIdByNameAsync(string name)
     {
-        var resp = await SendAsync(HttpMethod.Get, "/api/v5/rules", null);
+        var resp = await SendAsync(HttpMethod.Get, "/api/v5/rules", null, 60);
         if (resp.Error != null) return null;
         try
         {
@@ -724,8 +724,10 @@ public class EmqxClient
         return list;
     }
 
-    /// <summary>通用带认证的请求（返回 Body + 错误码）</summary>
-    private async Task<(string? Error, string? Body)> SendAsync(HttpMethod method, string path, string? jsonBody)
+    /// <summary>通用带认证的请求（返回 Body + 错误码）。
+    /// timeoutSeconds：默认 15s（采集轮询够用）；集群管理操作（创建连接器/规则等）需更长——异地集群
+    /// 管理 API 要广播到所有节点，同步慢可能超过 15s，调用方传 60</summary>
+    private async Task<(string? Error, string? Body)> SendAsync(HttpMethod method, string path, string? jsonBody, int timeoutSeconds = 15)
     {
         try
         {
@@ -734,7 +736,8 @@ public class EmqxClient
                 "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
             if (jsonBody != null)
                 req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-            using var resp = await _http.SendAsync(req);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var resp = await _http.SendAsync(req, cts.Token);
             var body = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {

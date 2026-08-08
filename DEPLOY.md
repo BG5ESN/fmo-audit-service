@@ -71,6 +71,18 @@ location /api/login { limit_req zone=login burst=5; proxy_pass http://127.0.0.1:
 
 **数据安全**：db 文件含 EMQX API Secret / ingest token / 管理员哈希，请勿以 root 运行服务（模板默认 User=emqx-monitor + db 文件 600 权限）；定期备份用 `sqlite3 emqx-monitor-server.db ".backup /backup/xxx.db"`（WAL 模式下直接 cp 可能丢数据）。
 
+## EMQX 集群部署（多服务器异地互联）
+
+工具对 EMQX 集群**开箱即用**（实测验证）：
+- **API 集群视图**：EMQX 地址填集群**任意一个节点**即可，`/api/v5/clients`、banned 均为全集群视图
+- **黑名单/身份控制跨节点**：banned 是集群级——任一节点拉黑，全集群拒绝该呼号（攻击者换节点也进不来）
+- **webhook 不重复**：每条消息只在入口节点触发一次规则，topic_stats 不会双计
+
+**异地集群创建连接器超时的排查**（常见问题）：
+1. **webhook 地址可达性（最常见）**：工具配置的 Webhook 地址必须是 EMQX **所有节点都能访问**的地址——异地节点若访问不到内网 IP（如 `http://192.168.1.131:9527`），connector 创建时探活失败/挂起。**跨地域部署请用公网可达地址（域名或打通内网）**
+2. **管理操作超时已放宽**：工具创建连接器/规则的请求超时为 60s（采集轮询仍 15s）；EMQX 侧 connector `connect_timeout` 为 30s——异地集群同步慢时仍可能超时，可再调大
+3. **版本注意**：集群内所有节点 EMQX 版本应一致（混合 5.x/6.x 集群规则路径不同，不受支持）
+
 **HTTPS**（推荐，套反向代理）：
 ```nginx
 # 反代示例（Nginx，或群晖反代）
