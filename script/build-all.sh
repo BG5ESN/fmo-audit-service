@@ -44,7 +44,7 @@ for RID in ${PLATFORMS//,/ }; do
   [ "$RID" = "win-x64" ] && BIN="$BIN.exe"
   [ -f "$BIN" ] || { echo "[!] $RID 产物缺失: $BIN，日志: $LOG"; exit 1; }
 
-  OUT="$DIST/fmo-audit-service-${RID}-v${VER}"
+  OUT="$DIST/fmo-audit-service-${RID}"
   cp "$BIN" "$OUT"
   chmod +x "$OUT" 2>/dev/null || true
   sha256sum "$OUT" > "$OUT.sha256"

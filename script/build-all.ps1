@@ -62,7 +62,7 @@ foreach ($RID in $Platforms.Split(',')) {
         exit 1
     }
 
-    $Out = "$Dist/fmo-audit-service-$RID-v$Version"
+    $Out = "$Dist/fmo-audit-service-$RID"
     Copy-Item $Bin $Out -Force
     $Hash = (Get-FileHash $Out -Algorithm SHA256).Hash.ToLower()
     Set-Content -Path "$Out.sha256" -Value "$Hash  $Out" -Encoding ASCII

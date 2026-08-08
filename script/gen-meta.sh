@@ -18,20 +18,21 @@ OUT="fmo-audit-service.json"
 echo "== FMO Audit Service 元数据生成 v$VER =="
 echo "基础 URL: $BASE"
 
-# 扫描产物：fmo-audit-service-<rid>-v<ver>[.exe]
-# 注意: 文件名里 rid 含 '-'（如 linux-arm64），按最后一个 -v<ver> 分割
+# 扫描产物：fmo-audit-service-<rid>[.exe]（固定名不带版本，版本由元数据 version 字段表达）
+# 注意: rid 含 '-'（如 linux-arm64），用已知平台列表精确匹配
+RIDS="linux-x64 linux-arm64 linux-arm osx-x64 osx-arm64 win-x64"
 ASSETS=""
 COUNT=0
-for f in "$DIST"/fmo-audit-service-*-v${VER}*; do
-  [ -f "$f" ] || continue
-  NAME=$(basename "$f")
-  # 去掉前缀和后缀得到 rid
-  RID="${NAME#fmo-audit-service-}"
-  RID="${RID%-v${VER}*}"
-  ASSETS="$ASSETS
+for RID in $RIDS; do
+  for f in "$DIST"/fmo-audit-service-${RID}*; do
+    [ -f "$f" ] || continue
+    case "$f" in *.sha256) continue ;; esac   # 跳过校验文件
+    NAME=$(basename "$f")
+    ASSETS="$ASSETS
     \"$RID\": \"${BASE}${NAME}\","
-  COUNT=$((COUNT + 1))
-  echo "  + $NAME -> rid=$RID"
+    COUNT=$((COUNT + 1))
+    echo "  + $NAME -> rid=$RID"
+  done
 done
 
 if [ "$COUNT" -eq 0 ]; then
