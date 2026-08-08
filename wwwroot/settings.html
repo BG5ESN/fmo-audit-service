@@ -49,6 +49,12 @@
         <label>API Secret</label>
         <input class="text-input" id="api-secret" type="password" autocomplete="off">
       </div>
+      <div style="font-size:12px;color:#666;line-height:1.8;margin-bottom:10px;background:#fafafa;border:1px solid #e5e5e5;padding:8px 10px">
+        <b>API 密钥获取方法</b>：EMQX Dashboard → 管理（系统设置）→ <b>API 密钥</b> → 新建密钥
+        <br>· 名称随意填写，角色选择 <b>administrator</b>（如自定义权限需包含：客户端、连接、黑名单等范围）
+        <br>· 创建后立即复制 <b>api_key</b> 与 <b>api_secret</b>——secret 只显示一次，丢失需重新创建
+        <br>· ⚠️ Dashboard 的登录账号（admin）<b>不能</b>调用 API，必须使用 API 密钥
+      </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-primary" id="save-config">保存并连接</button>
         <button class="btn" id="disconnect">断开监控</button>
