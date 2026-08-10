@@ -11,170 +11,187 @@ namespace EmqxMonitor;
 /// </summary>
 public class EmqxClient
 {
-    private readonly HttpClient _http;
+    private readonly HttpClient _http = new(new SocketsHttpHandler { Proxy = null, UseProxy = false, ConnectTimeout = TimeSpan.FromSeconds(10) }) { Timeout = TimeSpan.FromSeconds(15) };
 
     private string _baseUrl = "";
-    private string _apiKey = "";
+    private string _apiSecret = "";
+    private string? _version;
 
-    public EmqxClient()
+    private const string TopicBridgeName = "fas-auth-bridge";
+    private const string TopicRuleName = "fas-auth-rule";
+    private static Dictionary<string, string> BridgeHeaders(string token) => new() { ["content-type"] = "application/json", ["x-ingest-token"] = token };
+
+    /// <summary>配置 EMQX 连接并验证连通性</summary>
+    /// <returns>成功返回 null，失败返回错误消息</returns>
+    public async Task<string?> ConfigureAsync(string baseUrl, string apiSecret)
     {
-        // 显式禁用系统代理：面板连的是用户内网 EMQX，必须直连。
-        // 默认 HttpClient 会读 HTTP_PROXY 环境变量/系统代理，
-        // 且 .NET 的 NO_PROXY 不支持 CIDR 网段（如 192.168.1.0/24），
-        // 内网请求被错误转发到代理，代理可能返回 400/拒绝。
-        var handler = new SocketsHttpHandler
+        SetCredentials(baseUrl, apiSecret);
+
+        // 第 1 步：无认证探测 /status，确认地址可达且是 EMQX
+        var reachable = await ProbeStatusAsync();
+        if (reachable != null)
         {
-            Proxy = null,
-            UseProxy = false,
-            ConnectTimeout = TimeSpan.FromSeconds(10)
-        };
-        _http = new HttpClient(handler)
+            ClearCredentials();
+            return reachable;
+        }
+
+        // 第 2 步：带 key 验证 clients 接口
+        var test = await GetClientsAsync(limit: 1);
+        if (test.Error != null)
         {
-            Timeout = TimeSpan.FromSeconds(15)
-        };
+            ClearCredentials();
+            return test.Error switch
+            {
+                "BAD_API_KEY_OR_SECRET" => "API Key 错误：请检查 key:secret 是否正确（Dashboard → 管理 → API 密钥）",
+                "HTTP_401" => "认证失败（401）：请检查 API Key",
+                "HTTP_404" => "地址不对：EMQX REST API 路径应为 /api/v5（检查 EMQX 版本是否为 5.x）",
+                _ => $"连接失败：{test.Error}"
+            };
+        }
+
+        return null;
     }
 
-    /// <summary>是否已配置连接</summary>
-    public bool IsConfigured => !string.IsNullOrEmpty(_baseUrl) && !string.IsNullOrEmpty(_apiKey);
-
-    /// <summary>直接设置凭据（启动时从持久化配置恢复，不探测连通性；失败会在采集时体现）</summary>
-    public void SetCredentials(string baseUrl, string apiKey)
+    /// <summary>直接设置凭据（启动时从持久化配置恢复，不探测连通性；失败会在采集时体现）。
+    /// 必须不探测——服务启动时 EMQX 可能还没起来，探测失败会导致凭据落不进内存，采集永远起不来。</summary>
+    public void SetCredentials(string baseUrl, string apiSecret)
     {
-        var url = baseUrl.Trim().TrimEnd('/');
-        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
-            url = "http://" + url;
-        _baseUrl = url;
-        _apiKey = apiKey;
+        ClearCredentials();
+        if (!baseUrl.StartsWith("http://") && !baseUrl.StartsWith("https://"))
+            baseUrl = "http://" + baseUrl.Trim().TrimEnd('/');
+        _baseUrl = baseUrl;
+        _apiSecret = apiSecret;
     }
 
     /// <summary>清空内存凭据（完全重置时调用，避免 configured 状态残留）</summary>
     public void ClearCredentials()
     {
         _baseUrl = "";
-        _apiKey = "";
+        _apiSecret = "";
         _version = null;
     }
 
-    /// <summary>配置 EMQX 连接并验证连通性</summary>
-    /// <returns>成功返回 null，失败返回错误消息</returns>
-    public async Task<string?> ConfigureAsync(string baseUrl, string apiKey)
+    /// <summary>是否已配置连接</summary>
+    public bool IsConfigured => !string.IsNullOrEmpty(_baseUrl) && !string.IsNullOrEmpty(_apiSecret);
+
+    // ================================================================
+    // HTTP 底层：统一认证请求 + 错误码解析
+    // ================================================================
+    /// <summary>显式凭据版底层请求：认证/错误码解析/超时/网络分类与已配置版完全一致，仅凭据来自参数。
+    /// 用于 ConfigureAsync 验证连通性（凭据还没落内存，也不能落——验证失败不应污染状态）。</summary>
+    private async Task<ApiResult> DoRequestAsync(HttpMethod method, string path, string? jsonBody = null, int timeoutSeconds = 60)
     {
-        // 规范化：去掉尾部斜杠
-        var url = baseUrl.Trim().TrimEnd('/');
-        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
-            url = "http://" + url;
-
-        // 第 1 步：无认证探测 /status，确认地址可达且是 EMQX
-        var reachable = await ProbeStatusAsync(url);
-        if (reachable != null)
-            return reachable;
-
-        // 第 2 步：带 key 验证 clients 接口
-        var test = await GetClientsAsync(url, apiKey, limit: 1);
-        if (test.Error != null)
-        {
-            return test.Error switch
-            {
-                "BAD_API_KEY_OR_SECRET" => "API Key 错误：请检查 key:secret 是否正确（Dashboard → 管理 → API 密钥）",
-                "HTTP_401" => "认证失败（401）：请检查 API Key",
-                "HTTP_404" => "地址不对：EMQX REST API 路径应为 /api/v5（检查 EMQX 版本是否为 5.x/6.x）",
-                _ => $"连接失败：{test.Error}"
-            };
-        }
-
-        _baseUrl = url;
-        _apiKey = apiKey;
-        return null;
-    }
-
-    /// <summary>无认证探测 /status，返回 null 表示可达；否则返回错误消息</summary>
-    private async Task<string?> ProbeStatusAsync(string baseUrl)
-    {
+        if (string.IsNullOrEmpty(_baseUrl) || string.IsNullOrEmpty(_apiSecret))
+            return new ApiResult("未配置 EMQX 连接（URL 无效）", null);
         try
         {
-            using var resp = await _http.GetAsync($"{baseUrl}/status");
-            if (resp.IsSuccessStatusCode)
-                return null;  // 可达
-            return $"地址可达但响应异常（HTTP {(int)resp.StatusCode}）：{baseUrl}/status";
-        }
-        catch (TaskCanceledException)
-        {
-            return "请求超时：EMQX 地址不可达或防火墙拦截";
-        }
-        catch (HttpRequestException ex)
-        {
-            var msg = ex.InnerException?.Message ?? ex.Message;
-            if (msg.Contains("refused", StringComparison.OrdinalIgnoreCase))
-                return "连接被拒绝：EMQX 未启动或端口不对（默认 18083）";
-            if (msg.Contains("name or service", StringComparison.OrdinalIgnoreCase)
-                || msg.Contains("nodename", StringComparison.OrdinalIgnoreCase))
-                return "地址无法解析：请检查 EMQX 地址";
-            return $"网络错误：{msg}";
-        }
-    }
-
-    /// <summary>拉取客户端列表（最多 limit 条，实测 limit=10000 可用）</summary>
-    public async Task<ClientsResult> GetClientsAsync(int limit = 10000)
-        => await GetClientsAsync(_baseUrl, _apiKey, limit);
-
-    private async Task<ClientsResult> GetClientsAsync(string baseUrl, string apiKey, int limit)
-    {
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/v5/clients?limit={limit}");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(apiKey)));
-
-            using var resp = await _http.SendAsync(req);
-            var body = await resp.Content.ReadAsStringAsync();
-
+            using var req = new HttpRequestMessage(method, $"{_baseUrl}{path}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiSecret)));
+            if (jsonBody != null) req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var resp = await _http.SendAsync(req, cts.Token);
+            var body = await resp.Content.ReadAsStringAsync(cts.Token);
             if (!resp.IsSuccessStatusCode)
             {
-                // 尝试解析 EMQX 错误码
                 try
                 {
                     var err = JsonSerializer.Deserialize<EmqxError>(body);
-                    if (err?.Code != null)
-                        return new ClientsResult { Error = err.Code };
+                    if (err?.Code != null) return new ApiResult(err.Code, body);
                 }
-                catch { }
-                // 带出原始响应体，方便诊断（截断 200 字符）
-                var snippet = body.Length > 200 ? body[..200] : body;
-                return new ClientsResult { Error = $"HTTP_{(int)resp.StatusCode}: {snippet}" };
+                catch
+                {
+                    // ignored
+                }
+
+                return new ApiResult($"HTTP_{(int)resp.StatusCode}", body);
             }
 
-            var result = JsonSerializer.Deserialize<ClientsResponse>(body);
-            return new ClientsResult { Clients = result?.Data ?? [] };
+            return new ApiResult(null, body);
+        }
+        catch (UriFormatException)
+        {
+            return new ApiResult("未配置 EMQX 连接（URL 无效）", null);
         }
         catch (TaskCanceledException)
         {
-            return new ClientsResult { Error = "请求超时：EMQX 地址不可达或防火墙拦截" };
+            return new ApiResult("请求超时", null);
         }
         catch (HttpRequestException ex)
         {
-            // 细化常见错误：连接拒绝 / DNS 失败
-            var msg = ex.InnerException?.Message ?? ex.Message;
-            if (msg.Contains("refused", StringComparison.OrdinalIgnoreCase))
-                return new ClientsResult { Error = "连接被拒绝：EMQX 未启动或端口不对（默认 18083）" };
-            if (msg.Contains("name or service", StringComparison.OrdinalIgnoreCase)
-                || msg.Contains("nodename", StringComparison.OrdinalIgnoreCase))
-                return new ClientsResult { Error = "地址无法解析：请检查 EMQX 地址" };
-            return new ClientsResult { Error = $"网络错误：{msg}" };
+            return new ApiResult($"网络错误: {ex.Message}", null);
         }
     }
 
-    /// <summary>获取单个客户端详情（不存在返回 null）</summary>
-    public async Task<EmqxClientInfo?> GetClientAsync(string clientId)
+    /// <summary>带认证请求的结果。Ok = Error == null。Body 仅成功时非空。</summary>
+    private readonly record struct ApiResult(string? Error, string? Body)
     {
+        public bool Ok => Error == null;
+    }
+
+    /// <summary>判断 body 是否表示资源存在（响应体含 "\"name\":\"{name}\""）。
+    /// GET 单资源成功且 body 含 name → 存在；其余（404/网络错/空 body）→ 不存在。</summary>
+    private static bool ResourceExists(ApiResult r, string name) => r.Ok && !string.IsNullOrEmpty(r.Body) && r.Body!.Contains($"\"name\":\"{name}\"");
+
+
+    // ================================================================
+    // emqx api client
+    // ================================================================ 
+
+    /// <summary>获取服务状态</summary>
+    private async Task<string?> ProbeStatusAsync()
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, "/status");
+        return resp.Ok ? null : $"地址可达但响应异常（HTTP {resp.Error}）：{_baseUrl}/status";
+    }
+
+    /// <summary>获取 EMQX 版本</summary>
+    public async Task<string?> GetEmqxVersionAsync()
+    {
+        if (_version != null) return _version;
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/nodes");
+        if (!resp.Ok) return null;
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/clients/{Uri.EscapeDataString(clientId)}");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return null;
-            var body = await resp.Content.ReadAsStringAsync();
-            return JsonSerializer.Deserialize<EmqxClientInfo>(body);
+            using var doc = JsonDocument.Parse(resp.Body!);
+            var root = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement[0] : doc.RootElement;
+            _version = GetStringProp(root, "version") ?? "";
+        }
+        catch
+        {
+            _version = "";
+        }
+
+        return _version;
+    }
+
+    /// <summary>拉取客户端列表</summary>
+    public async Task<ClientsResult> GetClientsAsync(int limit = 1000)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, $"/api/v5/clients?limit={limit}");
+        if (resp.Ok)
+        {
+            var result = JsonSerializer.Deserialize<ClientsResponse>(resp.Body!);
+            return new ClientsResult { Clients = result?.Data ?? [] };
+        }
+
+        var error = resp.Error;
+        if (error != null && error.StartsWith("HTTP_", StringComparison.Ordinal) && resp.Body != null)
+        {
+            var snippet = resp.Body.Length > 200 ? resp.Body[..200] : resp.Body;
+            error = $"{error}: {snippet}";
+        }
+
+        return new ClientsResult { Error = error };
+    }
+
+    /// <summary>获取单个客户端详情</summary>
+    public async Task<EmqxClientInfo?> GetClientAsync(string clientId)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, $"/api/v5/clients/{Uri.EscapeDataString(clientId)}");
+        if (!resp.Ok) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<EmqxClientInfo>(resp.Body!);
         }
         catch
         {
@@ -182,48 +199,42 @@ public class EmqxClient
         }
     }
 
-    /// <summary>获取节点列表（EMQX 进程负载/内存）。实测 5.8.6：返回裸数组（无 data 包装），
-    /// memory_used/memory_total 是带单位字符串（如 "4.69G"），CPU 无百分比字段，用 load1 代替。</summary>
+    /// <summary>获取节点列表</summary>
     public async Task<List<NodeInfo>> GetNodesAsync()
     {
         var list = new List<NodeInfo>();
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/nodes");
+        if (!resp.Ok) return list;
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/nodes");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return list;
-            var body = await resp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(resp.Body!);
             if (!TryGetRootArray(doc.RootElement, out var nodes)) return list;
             foreach (var node in nodes)
             {
                 list.Add(new NodeInfo
                 {
-                    Node = node.TryGetProperty("node", out var n) ? n.GetString() : null,
+                    Node = GetStringProp(node, "node"),
                     Load1 = node.TryGetProperty("load1", out var l1) && l1.TryGetDouble(out var ld) ? ld : null,
                     MemoryTotal = node.TryGetProperty("memory_total", out var mt) ? ParseMemSize(mt) : null,
                     MemoryUsed = node.TryGetProperty("memory_used", out var mu) ? ParseMemSize(mu) : null,
                 });
             }
         }
-        catch { }
+        catch
+        {
+        }
+
         return list;
     }
 
-    /// <summary>获取集群消息计数（messages.received / messages.sent）。实测 5.8.6：返回节点数组。</summary>
+    /// <summary>获取集群消息计数</summary>
     public async Task<(long? Received, long? Sent)> GetMessageCountsAsync()
     {
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/metrics");
+        if (!resp.Ok) return (null, null);
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/metrics");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return (null, null);
-            var body = await resp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(resp.Body!);
             // 数组根（多节点）取第一个；兼容 {data:...} 包装
             JsonElement root = doc.RootElement;
             if (root.ValueKind == JsonValueKind.Array)
@@ -235,11 +246,397 @@ public class EmqxClient
             {
                 root = d[0];
             }
+
             long? recv = root.TryGetProperty("messages.received", out var mr) && mr.TryGetInt64(out var mrr) ? mrr : null;
             long? sent = root.TryGetProperty("messages.sent", out var ms) && ms.TryGetInt64(out var mss) ? mss : null;
             return (recv, sent);
         }
-        catch { return (null, null); }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>获取活跃告警名列表（逗号分隔）</summary>
+    public async Task<string> GetActiveAlarmsAsync()
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/alarms?activated=true");
+        if (!resp.Ok) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return "";
+            var names = new List<string>();
+            foreach (var a in data.EnumerateArray())
+            {
+                if (a.TryGetProperty("activated", out var act) && act.ValueKind == JsonValueKind.True && a.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } n)
+                    names.Add(n);
+            }
+
+            return string.Join(", ", names.Distinct());
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>获取 clientid 列表 -- 基于用户名</summary>
+    public async Task<List<string>> GetClientsByUsernameAsync(string username)
+    {
+        var list = new List<string>();
+        var resp = await DoRequestAsync(HttpMethod.Get, $"/api/v5/clients?username={Uri.EscapeDataString(username)}&limit=10000");
+        if (!resp.Ok) return list;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var c in data.EnumerateArray())
+                {
+                    if (c.TryGetProperty("clientid", out var id) && id.GetString() is { Length: > 0 } cid)
+                        list.Add(cid);
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return list;
+    }
+
+    /// <summary>获取黑名单</summary>
+    public async Task<List<BannedEntry>> GetBannedAsync()
+    {
+        var list = new List<BannedEntry>();
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/banned?limit=1000");
+        if (!resp.Ok) return list;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data)) list.AddRange(from b in data.EnumerateArray() let asType = GetStringProp(b, "as") let who = GetStringProp(b, "who") where asType == "username" && !string.IsNullOrEmpty(who) select new BannedEntry { Who = who, Reason = GetStringProp(b, "reason"), Until = GetStringProp(b, "until"), By = GetStringProp(b, "by") });
+        }
+        catch
+        {
+        }
+
+        return list;
+    }
+
+    /// <summary>移入黑名单并且断开链接 -- 基于用户名</summary>
+    public async Task<(string? Error, int Kicked)> BanAsync(string who, string? reason, string? untilRfc3339)
+    {
+        // 1) 写入 EMQX banned（拒绝新连接）；ALREADY_EXISTS = 已在黑名单，幂等视为成功
+        var body = JsonSerializer.Serialize(new Dictionary<string, object?> { ["as"] = "username", ["who"] = who, ["reason"] = reason, ["until"] = untilRfc3339 ?? "infinity" });
+        var resp = await DoRequestAsync(HttpMethod.Post, "/api/v5/banned", body);
+        if (!resp.Ok && resp.Error != "ALREADY_EXISTS") return (resp.Error, 0);
+
+        // 2) 查该呼号在线 clientid → 踢下线（banned 不自动踢已连接）
+        var clients = await GetClientsByUsernameAsync(who);
+        if (clients.Count == 0) return (null, 0);
+        var kick = await DoRequestAsync(HttpMethod.Post, "/api/v5/clients/kickout/bulk", JsonSerializer.Serialize(clients));
+        return kick.Ok ? (null, clients.Count) : ($"踢下线失败: {kick.Error}", 0);
+    }
+
+    /// <summary>移出黑名单 -- 基于用户名</summary>
+    public async Task<string?> UnbanAsync(string who)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Delete, $"/api/v5/banned/username/{Uri.EscapeDataString(who)}");
+        if (resp.Ok) return null;
+        return resp.Error == "NOT_FOUND" ? null : resp.Error; // 已不在黑名单 = 已解封
+    }
+
+    /// <summary>获取ruleId -- 基于规则名</summary>
+    private async Task<string?> FindRuleIdByNameAsync(string name)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, "/api/v5/rules");
+        if (!resp.Ok) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(resp.Body!);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var r in data.EnumerateArray())
+                {
+                    if (r.TryGetProperty("name", out var n) && n.GetString() == name && r.TryGetProperty("id", out var id)) return id.GetString();
+                }
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    /// <summary>创建 Rule</summary>
+    private async Task<RuleInfo?> CreateRuleAsync(string ruleName, string bridgeName, string topic)
+    {
+        var ruleBody = JsonSerializer.Serialize(new
+        {
+            name = ruleName,
+            sql = $"SELECT clientid, username, topic, base64_encode(payload) as payload, qos, timestamp, client_attrs FROM \"{topic}/#\"",
+            actions = new[] { "webhook:" + bridgeName },
+            enable = true,
+            description = "FAS topic rule"
+        });
+        var resp = await DoRequestAsync(HttpMethod.Post, "/api/v5/rules", ruleBody);
+        if (!resp.Ok) return null;
+        return JsonSerializer.Deserialize<RuleInfo>(resp.Body!);
+    }
+
+    /// <summary>更新 Rule</summary>
+    private async Task<RuleInfo?> UpdateRuleAsync(string ruleName, string bridgeName, string topic)
+    {
+        var ruleId = await FindRuleIdByNameAsync(ruleName);
+        if (ruleId == null) return null;
+        var ruleBody = JsonSerializer.Serialize(new
+        {
+            name = ruleName,
+            sql = $"SELECT clientid, username, topic, base64_encode(payload) as payload, qos, timestamp, client_attrs FROM \"{topic}/#\"",
+            actions = new[] { "webhook:" + bridgeName },
+            enable = true,
+            description = "FAS topic rule"
+        });
+        var resp = await DoRequestAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody);
+        return !resp.Ok ? null : JsonSerializer.Deserialize<RuleInfo>(resp.Body!);
+    }
+
+    /// <summary>删除 Rule -- 基于规则名</summary>
+    private async Task<string?> DeleteRuleAsync(string ruleName)
+    {
+        var ruleId = await FindRuleIdByNameAsync(ruleName);
+        if (ruleId == null) return null;
+        var del = await DoRequestAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}");
+        return !del.Ok ? $"删除规则失败: {del.Error}" : null;
+    }
+
+    /// <summary>创建 Bridge</summary>
+    private async Task<BridgeInfo?> CreateBridgeAsync(string bridgeName, string hookUrl, string token)
+    {
+        var bridgeBody = JsonSerializer.Serialize(new
+        {
+            type = "webhook",
+            name = bridgeName,
+            description = "FAS topic bridge",
+            url = hookUrl,
+            method = "post",
+            headers = BridgeHeaders(token),
+            body = "{\"topic\":\"${topic}\",\"username\":\"${username}\",\"clientid\":\"${clientid}\",\"payload\":\"${payload}\",\"qos\":\"${qos}\",\"client_attrs\":${client_attrs}}",
+            enable = true,
+            max_retries = 2
+        });
+        var resp = await DoRequestAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody);
+        if (!resp.Ok) return null;
+        return JsonSerializer.Deserialize<BridgeInfo>(resp.Body!);
+    }
+
+    /// <summary>更新 Bridge</summary>
+    private async Task<BridgeInfo?> UpdateBridgeAsync(string bridgeName, string hookUrl, string token)
+    {
+        var bridgeBody = JsonSerializer.Serialize(new
+        {
+            type = "webhook",
+            name = bridgeName,
+            description = "FAS topic bridge",
+            url = hookUrl,
+            method = "post",
+            headers = BridgeHeaders(token),
+            body = "{\"topic\":\"${topic}\",\"username\":\"${username}\",\"clientid\":\"${clientid}\",\"payload\":\"${payload}\",\"qos\":\"${qos}\",\"client_attrs\":${client_attrs}}",
+            enable = true,
+            max_retries = 2
+        });
+        var resp = await DoRequestAsync(HttpMethod.Put, $"/api/v5/bridges/webhook:{bridgeName}", bridgeBody);
+        if (!resp.Ok) return null;
+        return JsonSerializer.Deserialize<BridgeInfo>(resp.Body!);
+    }
+
+    /// <summary>删除 Bridge</summary>
+    private async Task<string?> DeleteBridgeAsync(string bridgeName)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{bridgeName}");
+        if (resp.Ok) return null;
+        // 404/NOT_FOUND 视为"本来就不存在"，幂等成功
+        if (resp.Error != null && (resp.Error.Contains("404") || resp.Error.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase))) return null;
+        return $"删除桥接失败: {resp.Error}";
+    }
+
+    /// <summary>获取 Bridge</summary>
+    private async Task<BridgeInfo?> GetBridgeAsync(string bridgeName)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, $"/api/v5/bridges/webhook:{bridgeName}");
+        if (!resp.Ok) return null;
+        return JsonSerializer.Deserialize<BridgeInfo>(resp.Body!);
+    }
+
+
+    // ================================================================
+    // 主题统计编排层
+    // 复用上面的原子 CRUD（Create/Update/Delete Bridge + Create/Update/Delete Rule），
+    // connector 无需显式建：POST /bridges 会自动建 type=http、name 同 bridge 的 backing connector，
+    // 其 status 随 bridge 联动，GetTopicRuleStatusAsync 查这个自动 connector(http:{bridgeName}) 即可。
+    // ================================================================
+
+    /// <summary>创建/更新主题统计规则引擎，幂等。尽力配置：失败不中断——bridge/规则全部尝试，统一报告。
+    /// 返回 (错误, 待确认步骤, 失败步骤)：集群环境下请求状态不可靠，最终以 GetTopicRuleStatusAsync 实际查询为准。
+    /// 流程：Upsert bridge（connector 自动生成）→ Upsert rule（桥接失败则跳过）。
+    /// 规则的 sql/action/description 已封装在 Create/UpdateRuleAsync 内部，编排层只传 (ruleName, bridgeName, topic)。</summary>
+    public async Task<(string? Error, string? Pending, string? Failed)> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
+    {
+        var pending = new List<string>();
+        var failed = new List<string>();
+
+        // 1) 桥接：存在则更新，否则创建。存在性以 GET 单资源成功为准（GetBridgeAsync != null）。
+        var bridgeStep = await UpsertBridgeAsync(pending, TopicBridgeName, webhookUrl, token);
+        if (!string.IsNullOrEmpty(bridgeStep)) failed.Add(bridgeStep);
+
+        // 2) 规则；桥接失败则跳过（依赖未就绪）
+        if (!string.IsNullOrEmpty(bridgeStep))
+        {
+            failed.Add("规则：跳过（依赖桥接未就绪）");
+        }
+        else
+        {
+            var ruleErr = await UpsertRuleAsync(pending, TopicRuleName, TopicBridgeName, topic);
+            if (ruleErr != null) failed.Add(ruleErr);
+        }
+
+        return (null, pending.Count > 0 ? string.Join("、", pending) : null, failed.Count > 0 ? string.Join("；", failed) : null);
+    }
+
+    /// <summary>删除主题统计规则引擎，幂等。流程：删 rule → 删 bridge（自动 connector 随 bridge 一起被 EMQX 清理）。</summary>
+    public async Task<string?> RemoveTopicRuleAsync()
+    {
+        var err = await DeleteRuleAsync(TopicRuleName);
+        if (err != null) return err;
+        return await DeleteBridgeAsync(TopicBridgeName);
+    }
+
+    /// <summary>Upsert Bridge：GET 查存在 → 存在 UpdateBridgeAsync，否则 CreateBridgeAsync。</summary>
+    private async Task<string?> UpsertBridgeAsync(List<string> pending, string bridgeName, string webhookUrl, string token)
+    {
+        var existing = await GetBridgeAsync(bridgeName);
+        if (existing != null) return await StepAsync(pending, "更新桥接", () => ToApiResult(UpdateBridgeAsync(bridgeName, webhookUrl, token)));
+        return await StepAsync(pending, "创建桥接", () => ToApiResult(CreateBridgeAsync(bridgeName, webhookUrl, token)));
+    }
+
+    /// <summary>Upsert Rule：FindRuleIdByName 判存在 → 存在 UpdateRuleAsync，否则 CreateRuleAsync。</summary>
+    private async Task<string?> UpsertRuleAsync(List<string> pending, string ruleName, string bridgeName, string topic)
+    {
+        var exists = await FindRuleIdByNameAsync(ruleName);
+        if (exists != null) return await StepAsync(pending, "更新规则", () => ToApiResult(UpdateRuleAsync(ruleName, bridgeName, topic)));
+        return await StepAsync(pending, "创建规则", () => ToApiResult(CreateRuleAsync(ruleName, bridgeName, topic)));
+    }
+
+
+    /// <summary>主题统计链路状态（「测试连接」按钮用）：connector / bridge / rule 四件套存在性与状态。</summary>
+    public async Task<TopicRuleStatus> GetTopicRuleStatusAsync()
+    {
+        var status = new TopicRuleStatus { V6 = false };
+        // 1) connector
+        var conn = await DoRequestAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicBridgeName}");
+        status.ConnectorExists = ResourceExists(conn, TopicBridgeName);
+        if (status.ConnectorExists && conn.Body != null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(conn.Body);
+                var root = doc.RootElement;
+                status.ConnectorStatus = GetStringProp(root, "status");
+                status.ConnectorReason = GetStringProp(root, "status_reason");
+            }
+            catch
+            {
+            }
+        }
+
+        // 2) bridge
+        var bridge = await GetBridgeAsync(TopicBridgeName);
+        status.MiddlewareExists = bridge != null;
+
+        // 3) rule
+        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
+        status.RuleExists = ruleId != null;
+        if (ruleId != null)
+        {
+            var rule = await DoRequestAsync(HttpMethod.Get, $"/api/v5/rules/{ruleId}");
+            if (rule.Ok && rule.Body != null)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(rule.Body);
+                    status.RuleEnabled = GetBoolProp(doc.RootElement, "enable");
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        // Ok 必须包含 connector 连接状态：exists 但 disconnected（EMQX 连不到 webhook）= 链路不通
+        status.Ok = status is { ConnectorExists: true, ConnectorStatus: "connected", MiddlewareExists: true, RuleExists: true, RuleEnabled: true };
+        return status;
+    }
+
+
+    /// <summary>把原子 CRUD 的 BridgeInfo?/RuleInfo? 转 StepAsync 需要的 ApiResult：
+    /// null（失败）→ Error（StepAsync 据此走 failed 分支）；非 null（成功）→ Ok。
+    /// ⚠️ 失败时丢失 DoRequestAsync 的具体错误码/超时分类——原子 CRUD 内部吞了 resp。
+    /// 这意味着"超时"和"真失败"在此无法区分，统一进 failed。若需保留超时→pending 语义，
+    /// 应让原子 CRUD 返回 (info, error) 元组而非裸 info。当前为简化首版，统一进 failed。</summary>
+    private static async Task<ApiResult> ToApiResult<T>(Task<T?> op) where T : class
+    {
+        var info = await op;
+        return info == null ? new ApiResult("创建/更新失败", null) : new ApiResult(null, null);
+    }
+
+    /// <summary>执行配置步骤：超时 → 记入 pending（不中断），真失败 → 返回错误消息（调用方记入 failed，不中断）</summary>
+    private static async Task<string?> StepAsync(List<string> pending, string stepName, Func<Task<ApiResult>> op)
+    {
+        var r = await op();
+        if (r.Ok) return null;
+        if (r.Error!.Contains("超时"))
+        {
+            pending.Add(stepName);
+            return null;
+        }
+
+        return $"{stepName}失败: {r.Error}";
+    }
+
+    /// <summary>兼容性自检：版本 + 关键 API 探测</summary>
+    public async Task<CompatibilityReport> CheckCompatibilityAsync()
+    {
+        var version = await GetEmqxVersionAsync() ?? "未知";
+        var checks = new List<CompatCheck>
+        {
+            await ProbeApiAsync("客户端列表", "/api/v5/clients?limit=1"),
+            await ProbeApiAsync("节点/健康", "/api/v5/nodes"),
+            await ProbeApiAsync("规则引擎-连接器", "/api/v5/connectors"),
+            await ProbeApiAsync("规则引擎-桥接", "/api/v5/bridges")
+        };
+        var supported = version.StartsWith("5.");
+        return new CompatibilityReport
+        {
+            Version = version,
+            Supported = supported,
+            Checks = checks,
+            SuggestedUpgrade = supported ? null : "当前 EMQX 版本不在支持范围。请升级到 EMQX 5.x",
+        };
+    }
+
+    /// <summary>探测单个 API 是否存在（404=版本过低不支持；401=认证问题）</summary>
+    private async Task<CompatCheck> ProbeApiAsync(string name, string path)
+    {
+        var resp = await DoRequestAsync(HttpMethod.Get, path, null, 60);
+        if (resp.Ok)
+            return new CompatCheck { Name = name, Path = path, Ok = true, Note = "可用" };
+        if (resp.Error!.Contains("404"))
+            return new CompatCheck { Name = name, Path = path, Ok = false, Note = "API 不存在——EMQX 版本过低" };
+        return new CompatCheck { Name = name, Path = path, Ok = false, Note = $"访问失败: {resp.Error}（检查 API Key/网络）" };
     }
 
     /// <summary>兼容两种响应外壳：裸数组 或 {data:[...]}</summary>
@@ -250,11 +647,13 @@ public class EmqxClient
             arr = root.EnumerateArray();
             return true;
         }
+
         if (root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Array)
         {
             arr = d.EnumerateArray();
             return true;
         }
+
         arr = default;
         return false;
     }
@@ -280,620 +679,27 @@ public class EmqxClient
         };
     }
 
-    /// <summary>获取活跃告警名列表（逗号分隔）</summary>
-    public async Task<string> GetActiveAlarmsAsync()
+    private static string? GetStringProp(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static bool? GetBoolProp(JsonElement e, string name)
     {
-        try
+        if (!e.TryGetProperty(name, out var v)) return null;
+        return v.ValueKind switch
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v5/alarms?activated=true");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return "";
-            var body = await resp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-                return "";
-            var names = new List<string>();
-            foreach (var a in data.EnumerateArray())
-            {
-                if (a.TryGetProperty("activated", out var act) && act.ValueKind == JsonValueKind.True
-                    && a.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } n)
-                    names.Add(n);
-            }
-            return string.Join(", ", names.Distinct());
-        }
-        catch { return ""; }
-    }
-
-    // ---------------- 主题统计：规则引擎自动配置（5.8.6 / 6.2.2 双版本） ----------------
-
-    /// <summary>连接器/规则固定命名（单实例管理；重复调用幂等更新）</summary>
-    public const string TopicConnectorName = "emqx-monitor-ingest";
-    public const string TopicBridgeName = "emqx-monitor-bridge";
-    public const string TopicActionName = "emqx-monitor-ingest-action";
-    public const string TopicRuleName = "emqx-monitor-topic-rule";
-
-    private string? _version;
-
-    /// <summary>探测 EMQX 主版本：6.x 用 action 路径（connector→action→规则引用 action），5.x 用 bridge 路径</summary>
-    private async Task<bool> IsV6Async()
-    {
-        var v = await GetEmqxVersionAsync();
-        return v?.StartsWith("6.") == true;
-    }
-
-    /// <summary>获取 EMQX 版本（如 "6.2.2"），探测失败返回 null</summary>
-    public async Task<string?> GetEmqxVersionAsync()
-    {
-        if (_version != null) return _version;
-        var resp = await SendAsync(HttpMethod.Get, "/api/v5/nodes", null);
-        if (resp.Error != null) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(resp.Body!);
-            var root = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement[0] : doc.RootElement;
-            _version = root.TryGetProperty("version", out var v) ? v.GetString() : "";
-        }
-        catch { _version = ""; }
-        return _version;
-    }
-
-    /// <summary>兼容性自检：版本 + 关键 API 探测</summary>
-    public async Task<CompatibilityReport> CheckCompatibilityAsync()
-    {
-        var version = await GetEmqxVersionAsync() ?? "未知";
-        var isV6 = version.StartsWith("6.");
-        var checks = new List<CompatCheck>();
-        checks.Add(await ProbeApiAsync("客户端列表", "/api/v5/clients?limit=1"));
-        checks.Add(await ProbeApiAsync("节点/健康", "/api/v5/nodes"));
-        checks.Add(await ProbeApiAsync("规则引擎-连接器", "/api/v5/connectors"));
-        if (isV6)
-            checks.Add(await ProbeApiAsync("规则引擎-动作(6.x 必需)", "/api/v5/actions"));
-        else
-            checks.Add(await ProbeApiAsync("规则引擎-桥接(5.x 必需)", "/api/v5/bridges"));
-        var supported = version.StartsWith("5.") || version.StartsWith("6.");
-        return new CompatibilityReport
-        {
-            Version = version,
-            Supported = supported,
-            Checks = checks,
-            SuggestedUpgrade = supported ? null : "当前 EMQX 版本不在支持范围。请升级到 EMQX 5.1 或更高版本（本工具支持 5.x 与 6.x）",
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
         };
-    }
-
-    /// <summary>探测单个 API 是否存在（404=版本过低不支持；401=认证问题）</summary>
-    private async Task<CompatCheck> ProbeApiAsync(string name, string path)
-    {
-        var resp = await SendAsync(HttpMethod.Get, path, null);
-        if (resp.Error == null)
-            return new CompatCheck { Name = name, Path = path, Ok = true, Note = "可用" };
-        if (resp.Error.Contains("404"))
-            return new CompatCheck { Name = name, Path = path, Ok = false, Note = "API 不存在——EMQX 版本过低" };
-        return new CompatCheck { Name = name, Path = path, Ok = false, Note = $"访问失败: {resp.Error}（检查 API Key/网络）" };
-    }
-
-    /// <summary>创建/更新主题统计规则引擎，自动适配 EMQX 版本（5.x bridge / 6.x action），幂等。
-    /// 尽力配置：失败不中断——四件套全部尝试（依赖步骤失败则跳过），统一报告。
-    /// 返回 (错误, 待确认步骤, 失败步骤)：集群环境下请求状态不可靠，最终以 GetTopicRuleStatusAsync 实际查询为准</summary>
-    public async Task<(string? Error, string? Pending, string? Failed)> SetupTopicRuleAsync(string webhookUrl, string token, string topic)
-        => await IsV6Async()
-            ? await SetupTopicRuleV6Async(webhookUrl, token, topic)
-            : await SetupTopicRuleV5Async(webhookUrl, token, topic);
-
-    /// <summary>执行配置步骤：超时 → 记入 pending（不中断），真失败 → 返回错误消息（调用方记入 failed，不中断）</summary>
-    private async Task<string?> StepAsync(List<string> pending, string stepName, Func<Task<(string? Error, string? Body)>> op)
-    {
-        var (err, _) = await op();
-        if (err == null) return null;
-        if (err.Contains("超时"))
-        {
-            pending.Add(stepName);
-            return null;
-        }
-        return $"{stepName}失败: {err}";
-    }
-
-    /// <summary>删除主题统计规则引擎（适配版本），幂等</summary>
-    public async Task<string?> RemoveTopicRuleAsync()
-        => await IsV6Async() ? await RemoveTopicRuleV6Async() : await RemoveTopicRuleV5Async();
-
-    /// <summary>主题统计链路状态（「测试连接」按钮用）：connector / bridge|action / rule 四件套存在性与状态。
-    /// 集群场景配置可能超时但实际成功——以此查询为准，与 EMQX Dashboard 显示一致</summary>
-    public async Task<TopicRuleStatus> GetTopicRuleStatusAsync()
-    {
-        var status = new TopicRuleStatus();
-        var isV6 = await IsV6Async();
-        status.V6 = isV6;
-
-        // 1) connector
-        var conn = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 30);
-        status.ConnectorExists = conn.Error == null && conn.Body?.Contains($"\"name\":\"{TopicConnectorName}\"") == true;
-        if (status.ConnectorExists && conn.Body != null)
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(conn.Body);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String)
-                    status.ConnectorStatus = s.GetString();
-                if (root.TryGetProperty("status_reason", out var sr) && sr.ValueKind == JsonValueKind.String)
-                    status.ConnectorReason = sr.GetString();
-            }
-            catch { }
-        }
-
-        // 2) bridge(5.x) 或 action(6.x)
-        var midPath = isV6 ? $"/api/v5/actions/http:{TopicActionName}" : $"/api/v5/bridges/webhook:{TopicBridgeName}";
-        var midName = isV6 ? TopicActionName : TopicBridgeName;
-        var mid = await SendAsync(HttpMethod.Get, midPath, null, 30);
-        status.MiddlewareExists = mid.Error == null && mid.Body?.Contains($"\"name\":\"{midName}\"") == true;
-
-        // 3) rule
-        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
-        status.RuleExists = ruleId != null;
-        if (ruleId != null)
-        {
-            var rule = await SendAsync(HttpMethod.Get, $"/api/v5/rules/{ruleId}", null, 30);
-            if (rule.Error == null && rule.Body != null)
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(rule.Body);
-                    status.RuleEnabled = doc.RootElement.TryGetProperty("enable", out var en) && en.ValueKind == JsonValueKind.True;
-                }
-                catch { }
-            }
-        }
-
-        // Ok 必须包含 connector 连接状态：exists 但 disconnected（EMQX 连不到 webhook）= 链路不通
-        status.Ok = status.ConnectorExists
-                    && status.ConnectorStatus == "connected"
-                    && status.MiddlewareExists
-                    && status.RuleExists
-                    && status.RuleEnabled == true;
-        return status;
-    }
-
-    // ---------- 6.x 路径（实测 6.2.2）：connector → action → 规则引用 "http:{action}" ----------
-    // 规则动作不能直接引用 connector（actions.discarded 计数），必须创建 action 实体。
-    // action parameters.body 用 "${.}"（整个输出 JSON），payload 由 monitor 端 base64 解码算字节。
-
-    private async Task<(string? Error, string? Pending, string? Failed)> SetupTopicRuleV6Async(string webhookUrl, string token, string topic)
-    {
-        var uri = new Uri(webhookUrl);
-        var baseUrl = uri.GetLeftPart(UriPartial.Authority);
-        var path = uri.AbsolutePath;
-        var pending = new List<string>();
-
-        // 1) 连接器（基础地址 + token headers）
-        var connectorBody = JsonSerializer.Serialize(new
-        {
-            type = "http",
-            name = TopicConnectorName,
-            description = "EMQX Monitor topic ingest",
-            url = baseUrl,
-            headers = new Dictionary<string, string>
-            {
-                ["content-type"] = "application/json",
-                ["x-ingest-token"] = token
-            },
-            enable = true
-        });
-        // PUT 不允许 name/type 字段（6.x 实测 unknown_fields），只更新部分字段
-        var connectorUpdateBody = JsonSerializer.Serialize(new
-        {
-            url = baseUrl,
-            headers = new Dictionary<string, string>
-            {
-                ["content-type"] = "application/json",
-                ["x-ingest-token"] = token
-            },
-            enable = true
-        });
-        // 1) 连接器：存在则更新，否则创建（失败不中断，记录）
-        var failed = new List<string>();
-        string? connStep = null;
-        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
-        if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
-        {
-            connStep = await StepAsync(pending, "更新连接器", () => SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody, 60));
-        }
-        else
-        {
-            connStep = await StepAsync(pending, "创建连接器", () => SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60));
-        }
-        if (!string.IsNullOrEmpty(connStep)) failed.Add(connStep);
-
-        // 2) action（egress：method/path/headers/body 模板）；连接器失败则跳过
-        var actionBody = JsonSerializer.Serialize(new
-        {
-            type = "http",
-            name = TopicActionName,
-            connector = TopicConnectorName,
-            enable = true,
-            parameters = new
-            {
-                method = "post",
-                path,
-                headers = new Dictionary<string, string>
-                {
-                    ["content-type"] = "application/json",
-                    ["x-ingest-token"] = token
-                },
-                body = "${.}"
-            }
-        });
-        // PUT 不允许 name/type（6.x 实测 required 仅 connector+parameters）
-        var actionUpdateBody = JsonSerializer.Serialize(new
-        {
-            connector = TopicConnectorName,
-            enable = true,
-            parameters = new
-            {
-                method = "post",
-                path,
-                headers = new Dictionary<string, string>
-                {
-                    ["content-type"] = "application/json",
-                    ["x-ingest-token"] = token
-                },
-                body = "${.}"
-            }
-        });
-        var existingAction = await SendAsync(HttpMethod.Get, $"/api/v5/actions/http:{TopicActionName}", null, 60);
-        string? midStep = null;
-        if (!string.IsNullOrEmpty(connStep))
-        {
-            failed.Add("动作：跳过（依赖连接器未就绪）");
-        }
-        else if (existingAction.Error == null && existingAction.Body != null && existingAction.Body.Contains($"\"name\":\"{TopicActionName}\""))
-        {
-            midStep = await StepAsync(pending, "更新动作", () => SendAsync(HttpMethod.Put, $"/api/v5/actions/http:{TopicActionName}", actionUpdateBody, 60));
-        }
-        else
-        {
-            midStep = await StepAsync(pending, "创建动作", () => SendAsync(HttpMethod.Post, "/api/v5/actions", actionBody, 60));
-        }
-        if (!string.IsNullOrEmpty(midStep)) failed.Add(midStep);
-
-        // 3) 规则；动作失败则跳过
-        if (!string.IsNullOrEmpty(midStep))
-        {
-            failed.Add("规则：跳过（依赖动作未就绪）");
-        }
-        else
-        {
-            var ruleErr = await UpsertTopicRuleAsync(pending, topic, $"http:{TopicActionName}");
-            if (ruleErr != null) failed.Add(ruleErr);
-        }
-
-        return (null, pending.Count > 0 ? string.Join("、", pending) : null,
-                failed.Count > 0 ? string.Join("；", failed) : null);
-    }
-
-    private async Task<string?> RemoveTopicRuleV6Async()
-    {
-        var err = await DeleteTopicRuleAsync();
-        if (err != null) return err;
-        var adel = await SendAsync(HttpMethod.Delete, $"/api/v5/actions/http:{TopicActionName}", null, 60);
-        if (IsNotFound(adel.Error)) return $"删除动作失败: {adel.Error}";
-        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
-        if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
-        return null;
-    }
-
-    // ---------- 5.x 路径（实测 5.8.6）：connector → bridge v2 → 规则引用 "webhook:{bridge}" ----------
-    // 实测要点：规则 action 必须引用 bridge（引用 connector 校验通过但 actions 计数为 0/discarded）；
-    // bridge body 必须模板化为完整 JSON；规则 SQL 不能用 length() 函数。
-
-    private async Task<(string? Error, string? Pending, string? Failed)> SetupTopicRuleV5Async(string webhookUrl, string token, string topic)
-    {
-        var pending = new List<string>();
-        var failed = new List<string>();
-        var connectorBody = JsonSerializer.Serialize(new
-        {
-            type = "http",
-            name = TopicConnectorName,
-            description = "EMQX Monitor topic ingest",
-            url = webhookUrl,
-            headers = new Dictionary<string, string>
-            {
-                ["content-type"] = "application/json",
-                ["x-ingest-token"] = token
-            },
-            enable = true,
-            pool_size = 8,
-            enable_pipelining = 100,
-            connect_timeout = "30s"
-        });
-
-        // 1) 连接器：存在则更新，否则创建（失败不中断，记录）
-        // PUT 不允许 name/type 字段（5.x/6.x 实测 unknown_fields），更新用精简 body
-        var connectorUpdateBody = JsonSerializer.Serialize(new
-        {
-            url = webhookUrl,
-            headers = new Dictionary<string, string>
-            {
-                ["content-type"] = "application/json",
-                ["x-ingest-token"] = token
-            },
-            enable = true,
-            pool_size = 8,
-            enable_pipelining = 100,
-            connect_timeout = "30s"
-        });
-        string? connStep = null;
-        var existing = await SendAsync(HttpMethod.Get, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
-        if (existing.Error == null && existing.Body != null && existing.Body.Contains($"\"name\":\"{TopicConnectorName}\""))
-        {
-            connStep = await StepAsync(pending, "更新连接器", () => SendAsync(HttpMethod.Put, $"/api/v5/connectors/http:{TopicConnectorName}", connectorUpdateBody, 60));
-        }
-        else
-        {
-            connStep = await StepAsync(pending, "创建连接器", () => SendAsync(HttpMethod.Post, "/api/v5/connectors", connectorBody, 60));
-        }
-        if (!string.IsNullOrEmpty(connStep)) failed.Add(connStep);
-
-        // 2) bridge v2：平铺 url/method/headers/body（实测 required: url）
-        // ⚠️ type 必须用 "webhook"：5.8.9 起运行时移除 "http" bridge 类型（swagger enum 残留但创建报 unknown bridge type，
-        //    实测 5.8.9 probe: http→400 / webhook→204；5.8.6 两种都接受）——用 webhook 双版本兼容
-        var bridgeBody = JsonSerializer.Serialize(new
-        {
-            type = "webhook",
-            name = TopicBridgeName,
-            description = "EMQX Monitor topic bridge",
-            url = webhookUrl,
-            method = "post",
-            headers = new Dictionary<string, string>
-            {
-                ["content-type"] = "application/json",
-                ["x-ingest-token"] = token
-            },
-            body = "{\"topic\":\"${topic}\",\"username\":\"${username}\",\"clientid\":\"${clientid}\",\"payload\":\"${payload}\",\"qos\":\"${qos}\"}",
-            enable = true,
-            max_retries = 2
-        });
-        var bridgeId = $"webhook:{TopicBridgeName}";
-        var existingBridge = await SendAsync(HttpMethod.Get, $"/api/v5/bridges/{bridgeId}", null, 60);
-        string? midStep = null;
-        if (!string.IsNullOrEmpty(connStep))
-        {
-            failed.Add("桥接：跳过（依赖连接器未就绪）");
-        }
-        else if (existingBridge.Error == null && existingBridge.Body != null && existingBridge.Body.Contains($"\"name\":\"{TopicBridgeName}\""))
-        {
-            midStep = await StepAsync(pending, "更新桥接", () => SendAsync(HttpMethod.Put, $"/api/v5/bridges/{bridgeId}", bridgeBody, 60));
-        }
-        else
-        {
-            midStep = await StepAsync(pending, "创建桥接", () => SendAsync(HttpMethod.Post, "/api/v5/bridges", bridgeBody, 60));
-        }
-        if (!string.IsNullOrEmpty(midStep)) failed.Add(midStep);
-
-        // 3) 规则；桥接失败则跳过
-        if (!string.IsNullOrEmpty(midStep))
-        {
-            failed.Add("规则：跳过（依赖桥接未就绪）");
-        }
-        else
-        {
-            var ruleErr = await UpsertTopicRuleAsync(pending, topic, $"webhook:{TopicBridgeName}");
-            if (ruleErr != null) failed.Add(ruleErr);
-        }
-
-        return (null, pending.Count > 0 ? string.Join("、", pending) : null,
-                failed.Count > 0 ? string.Join("；", failed) : null);
-    }
-
-    private async Task<string?> RemoveTopicRuleV5Async()
-    {
-        var err = await DeleteTopicRuleAsync();
-        if (err != null) return err;
-        var bdel = await SendAsync(HttpMethod.Delete, $"/api/v5/bridges/webhook:{TopicBridgeName}", null, 60);
-        if (IsNotFound(bdel.Error)) return $"删除桥接失败: {bdel.Error}";
-        var cdel = await SendAsync(HttpMethod.Delete, $"/api/v5/connectors/http:{TopicConnectorName}", null, 60);
-        if (IsNotFound(cdel.Error)) return $"删除连接器失败: {cdel.Error}";
-        return null;
-    }
-
-    /// <summary>删除资源时 404/NOT_FOUND 视为"本来就不存在"，不算失败</summary>
-    private static bool IsNotFound(string? err)
-        => err != null && !err.Contains("404") && !err.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>创建/更新规则（SQL: topic/# 通配，覆盖精确主题与子主题；client_attrs 用于 6.x 自动带出 callsign；
-    /// base64_encode(payload)：二进制 payload 必须 base64 才能无损嵌入 webhook JSON——直接内嵌原始字节会破坏 JSON 导致消息被丢弃）</summary>
-    private async Task<string?> UpsertTopicRuleAsync(List<string> pending, string topic, string actionRef)
-    {
-        var ruleSql = $"SELECT clientid, username, topic, base64_encode(payload) as payload, qos, timestamp, client_attrs FROM \"{topic}/#\"";
-        var ruleBody = JsonSerializer.Serialize(new
-        {
-            name = TopicRuleName,
-            sql = ruleSql,
-            actions = new[] { actionRef },
-            enable = true,
-            description = "EMQX Monitor topic ingest rule"
-        });
-        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
-        if (ruleId != null)
-        {
-            var e = await StepAsync(pending, "更新规则", () => SendAsync(HttpMethod.Put, $"/api/v5/rules/{ruleId}", ruleBody, 60));
-            if (e != null) return e;
-        }
-        else
-        {
-            var e = await StepAsync(pending, "创建规则", () => SendAsync(HttpMethod.Post, "/api/v5/rules", ruleBody, 60));
-            if (e != null) return e;
-        }
-        return null;
-    }
-
-    /// <summary>删除主题统计规则</summary>
-    private async Task<string?> DeleteTopicRuleAsync()
-    {
-        var ruleId = await FindRuleIdByNameAsync(TopicRuleName);
-        if (ruleId != null)
-        {
-            var del = await SendAsync(HttpMethod.Delete, $"/api/v5/rules/{ruleId}", null, 60);
-            if (del.Error != null) return $"删除规则失败: {del.Error}";
-        }
-        return null;
-    }
-
-    /// <summary>按名称查找规则 ID</summary>
-    private async Task<string?> FindRuleIdByNameAsync(string name)
-    {
-        var resp = await SendAsync(HttpMethod.Get, "/api/v5/rules", null, 60);
-        if (resp.Error != null) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(resp.Body!);
-            if (doc.RootElement.TryGetProperty("data", out var data))
-            {
-                foreach (var r in data.EnumerateArray())
-                {
-                    if (r.TryGetProperty("name", out var n) && n.GetString() == name
-                        && r.TryGetProperty("id", out var id))
-                        return id.GetString();
-                }
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    // ---------------- 黑名单（banned API，5.8.6 / 6.2.2 实测一致） ----------------
-    // 语义：banned 只阻止新连接，不踢已连接客户端——拉黑必须两步：POST banned + kickout。
-    // until 传 RFC3339（服务器自动转 UTC 存储）；"infinity" = 永久。
-
-    /// <summary>拉黑一个呼号（username 粒度）并立即踢掉其在线连接。返回 (错误, 被踢客户端数)</summary>
-    public async Task<(string? Error, int Kicked)> BanAsync(string who, string? reason, string? untilRfc3339)
-    {
-        // 1) 写入 EMQX banned（拒绝新连接）；ALREADY_EXISTS = 已在黑名单，幂等视为成功
-        var body = JsonSerializer.Serialize(new Dictionary<string, object?>
-        {
-            ["as"] = "username",
-            ["who"] = who,
-            ["reason"] = reason,
-            ["until"] = untilRfc3339 ?? "infinity",
-        });
-        var resp = await SendAsync(HttpMethod.Post, "/api/v5/banned", body);
-        if (resp.Error != null && resp.Error != "ALREADY_EXISTS") return (resp.Error, 0);
-
-        // 2) 查该呼号在线 clientid → 踢下线（banned 不自动踢已连接）
-        var clients = await GetClientsByUsernameAsync(who);
-        if (clients.Count == 0) return (null, 0);
-        var kick = await SendAsync(HttpMethod.Post, "/api/v5/clients/kickout/bulk", JsonSerializer.Serialize(clients));
-        return kick.Error == null ? (null, clients.Count) : ($"踢下线失败: {kick.Error}", 0);
-    }
-
-    /// <summary>查询某呼号（username 精确匹配）当前在线 clientid 列表</summary>
-    public async Task<List<string>> GetClientsByUsernameAsync(string username)
-    {
-        var list = new List<string>();
-        var resp = await SendAsync(HttpMethod.Get, $"/api/v5/clients?username={Uri.EscapeDataString(username)}&limit=10000", null);
-        if (resp.Error != null) return list;
-        try
-        {
-            using var doc = JsonDocument.Parse(resp.Body!);
-            if (doc.RootElement.TryGetProperty("data", out var data))
-            {
-                foreach (var c in data.EnumerateArray())
-                {
-                    if (c.TryGetProperty("clientid", out var id) && id.GetString() is { Length: > 0 } cid)
-                        list.Add(cid);
-                }
-            }
-        }
-        catch { }
-        return list;
-    }
-
-    /// <summary>解封呼号（不在黑名单时幂等成功，不报错）</summary>
-    public async Task<string?> UnbanAsync(string who)
-    {
-        var resp = await SendAsync(HttpMethod.Delete, $"/api/v5/banned/username/{Uri.EscapeDataString(who)}", null);
-        if (resp.Error == null) return null;
-        return resp.Error == "NOT_FOUND" ? null : resp.Error;   // 已不在黑名单 = 已解封
-    }
-
-    /// <summary>读取 EMQX 侧当前黑名单（username 粒度；管理页与本地流水对照用）</summary>
-    public async Task<List<BannedEntry>> GetBannedAsync()
-    {
-        var list = new List<BannedEntry>();
-        var resp = await SendAsync(HttpMethod.Get, "/api/v5/banned?limit=1000", null);
-        if (resp.Error != null) return list;
-        try
-        {
-            using var doc = JsonDocument.Parse(resp.Body!);
-            if (doc.RootElement.TryGetProperty("data", out var data))
-            {
-                foreach (var b in data.EnumerateArray())
-                {
-                    var asType = b.TryGetProperty("as", out var a) ? a.GetString() : null;
-                    var who = b.TryGetProperty("who", out var w) ? w.GetString() : null;
-                    if (asType != "username" || string.IsNullOrEmpty(who)) continue;   // 只展示呼号粒度
-                    list.Add(new BannedEntry
-                    {
-                        Who = who,
-                        Reason = b.TryGetProperty("reason", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null,
-                        Until = b.TryGetProperty("until", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null,
-                        By = b.TryGetProperty("by", out var by) && by.ValueKind == JsonValueKind.String ? by.GetString() : null,
-                    });
-                }
-            }
-        }
-        catch { }
-        return list;
-    }
-
-    /// <summary>通用带认证的请求（返回 Body + 错误码）。
-    /// timeoutSeconds：默认 15s（采集轮询够用）；集群管理操作（创建连接器/规则等）需更长——异地集群
-    /// 管理 API 要广播到所有节点，同步慢可能超过 15s，调用方传 60</summary>
-    private async Task<(string? Error, string? Body)> SendAsync(HttpMethod method, string path, string? jsonBody, int timeoutSeconds = 15)
-    {
-        try
-        {
-            using var req = new HttpRequestMessage(method, $"{_baseUrl}{path}");
-            req.Headers.Authorization = new AuthenticationHeaderValue(
-                "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(_apiKey)));
-            if (jsonBody != null)
-                req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-            using var resp = await _http.SendAsync(req, cts.Token);
-            var body = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
-            {
-                try
-                {
-                    var err = JsonSerializer.Deserialize<EmqxError>(body);
-                    if (err?.Code != null) return (err.Code, body);
-                }
-                catch { }
-                return ($"HTTP_{(int)resp.StatusCode}", body);
-            }
-            return (null, body);
-        }
-        catch (UriFormatException)
-        {
-            return ("未配置 EMQX 连接（URL 无效）", null);
-        }
-        catch (TaskCanceledException)
-        {
-            return ("请求超时", null);
-        }
-        catch (HttpRequestException ex)
-        {
-            return ($"网络错误: {ex.Message}", null);
-        }
     }
 }
 
 public class NodeInfo
 {
     public string? Node { get; set; }
+
     /// <summary>系统 1 分钟负载均值（EMQX 5.x 无 CPU 百分比字段）</summary>
     public double? Load1 { get; set; }
+
     public long? MemoryTotal { get; set; }
     public long? MemoryUsed { get; set; }
 }
@@ -921,18 +727,20 @@ public class BannedEntry
 {
     public string Who { get; init; } = "";
     public string? Reason { get; init; }
-    public string? Until { get; init; }   // RFC3339 或 "infinity"（永久）
+    public string? Until { get; init; } // RFC3339 或 "infinity"（永久）
     public string? By { get; init; }
 }
 
 /// <summary>主题统计链路状态（测试连接用）</summary>
 public class TopicRuleStatus
 {
+    /// <summary>是否为 6.x（已废弃，恒 false；保留供前端 app.js 的 s.v6 判断兼容，当前仅支持 5.x bridge）</summary>
     public bool V6 { get; set; }
+
     public bool ConnectorExists { get; set; }
-    public string? ConnectorStatus { get; set; }    // connected / connecting / disconnected
+    public string? ConnectorStatus { get; set; } // connected / connecting / disconnected
     public string? ConnectorReason { get; set; }
-    public bool MiddlewareExists { get; set; }      // 5.x bridge / 6.x action
+    public bool MiddlewareExists { get; set; } // bridge 存在性
     public bool RuleExists { get; set; }
     public bool? RuleEnabled { get; set; }
     public bool Ok { get; set; }
@@ -964,7 +772,7 @@ public class ClientsMeta
     [JsonPropertyName("hasnext")] public bool HasNext { get; set; }
 }
 
-/// <summary>EMQX 客户端信息（字段对应 5.8.6 实测返回）</summary>
+/// <summary>EMQX 客户端信息</summary>
 public class EmqxClientInfo
 {
     [JsonPropertyName("clientid")] public string ClientId { get; set; } = "";
@@ -993,10 +801,14 @@ public class EmqxClientInfo
     [JsonPropertyName("send_msg.dropped")] public long SendMsgDropped { get; set; }
     [JsonPropertyName("inflight_cnt")] public long InflightCnt { get; set; }
     [JsonPropertyName("mqueue_len")] public long MqueueLen { get; set; }
-    [JsonPropertyName("subscriptions_cnt")] public long SubscriptionsCnt { get; set; }
+
+    [JsonPropertyName("subscriptions_cnt")]
+    public long SubscriptionsCnt { get; set; }
+
     [JsonPropertyName("node")] public string? Node { get; set; }
     [JsonPropertyName("proto_ver")] public int ProtoVer { get; set; }
     [JsonPropertyName("clean_start")] public bool CleanStart { get; set; }
+
     /// <summary>客户端属性（认证时服务端写入）：callsign=呼号, uid=用户编号。呼号追踪优先于此字段</summary>
     [JsonPropertyName("client_attrs")]
     public Dictionary<string, string>? ClientAttrs { get; set; }
@@ -1008,4 +820,50 @@ public class EmqxClientInfo
     /// <summary>用户编号（client_attrs.uid，可能为 null）</summary>
     public string? Uid
         => ClientAttrs is { } attrs && attrs.TryGetValue("uid", out var u) ? u : null;
+}
+
+public class RuleInfo
+{
+    [JsonPropertyName("id")] public string Id { get; init; } = "";
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("sql")] public string? Sql { get; init; }
+    [JsonPropertyName("actions")] public List<string> Actions { get; init; } = [];
+    [JsonPropertyName("from")] public List<string> From { get; init; } = [];
+    [JsonPropertyName("enable")] public bool Enable { get; init; }
+    [JsonPropertyName("description")] public string? Description { get; init; }
+    [JsonPropertyName("metadata")] public JsonElement? Metadata { get; init; }
+    [JsonPropertyName("created_at")] public string? CreatedAt { get; init; }
+    [JsonPropertyName("last_modified_at")] public string? LastModifiedAt { get; init; }
+}
+
+public class BridgeInfo
+{
+    [JsonPropertyName("type")] public string? Type { get; init; } // webhook / http
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("url")] public string? Url { get; init; }
+    [JsonPropertyName("method")] public string? Method { get; init; } // post / put / get / delete
+    [JsonPropertyName("headers")] public Dictionary<string, string>? Headers { get; init; }
+    [JsonPropertyName("body")] public string? Body { get; init; }
+    [JsonPropertyName("enable")] public bool Enable { get; init; }
+    [JsonPropertyName("description")] public string? Description { get; init; }
+    [JsonPropertyName("direction")] public string? Direction { get; init; } // egress
+    [JsonPropertyName("local_topic")] public string? LocalTopic { get; init; }
+    [JsonPropertyName("connect_timeout")] public string? ConnectTimeout { get; init; }
+    [JsonPropertyName("request_timeout")] public string? RequestTimeout { get; init; }
+    [JsonPropertyName("retry_interval")] public string? RetryInterval { get; init; }
+    [JsonPropertyName("max_retries")] public int? MaxRetries { get; init; }
+    [JsonPropertyName("pool_size")] public int? PoolSize { get; init; }
+    [JsonPropertyName("pool_type")] public string? PoolType { get; init; } // random / hash
+
+    [JsonPropertyName("enable_pipelining")]
+    public int? EnablePipelining { get; init; }
+
+    [JsonPropertyName("ssl")] public JsonElement? Ssl { get; init; }
+    [JsonPropertyName("resource_opts")] public JsonElement? ResourceOpts { get; init; }
+    [JsonPropertyName("tags")] public List<string>? Tags { get; init; }
+
+    // ---- 以下仅 GET 返回时有值（运行时状态）----
+    [JsonPropertyName("status")] public string? Status { get; init; } // connected / disconnected / connecting / inconsistent
+    [JsonPropertyName("status_reason")] public string? StatusReason { get; init; }
+    [JsonPropertyName("node_status")] public JsonElement? NodeStatus { get; init; }
 }

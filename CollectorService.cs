@@ -16,7 +16,8 @@ public class CollectorService : BackgroundService
     private readonly Database _db;
     private readonly IHostHealthCollector _health;
 
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
+
     // clientid → 上一轮累计计数器
     private readonly Dictionary<string, (long SendOct, long RecvOct, long SendMsg, long RecvMsg, long SendPkt, long RecvPkt)> _prev = new();
 
@@ -42,6 +43,7 @@ public class CollectorService : BackgroundService
 
     /// <summary>最近一次采集的在线客户端列表（只读副本；在线页直接读此缓存，不重复打 EMQX）</summary>
     public IReadOnlyList<EmqxClientInfo> LastClients { get; private set; } = [];
+
     /// <summary>LastClients 的采集时间（本地）</summary>
     public DateTime? LastClientsAt { get; private set; }
 
@@ -52,6 +54,7 @@ public class CollectorService : BackgroundService
         {
             _prev.Clear();
         }
+
         _lastMsgTotal = null;
         LastCollectAt = null;
         LastCollectOk = false;
@@ -62,7 +65,7 @@ public class CollectorService : BackgroundService
         LastClientsAt = null;
     }
 
-    private int _collecting;   // 防重入：定时循环与手动触发（拉黑后即时刷新）不并发
+    private int _collecting; // 防重入：定时循环与手动触发（拉黑后即时刷新）不并发
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -77,8 +80,8 @@ public class CollectorService : BackgroundService
             {
                 break;
             }
-            if (IsConfigured)
-                await CollectAsync();
+
+            if (IsConfigured) await CollectAsync();
         }
     }
 
@@ -86,17 +89,22 @@ public class CollectorService : BackgroundService
     public async Task CollectNowAsync()
     {
         if (!IsConfigured || Interlocked.Exchange(ref _collecting, 1) != 0) return;
-        try { await CollectAsync(); }
-        finally { Interlocked.Exchange(ref _collecting, 0); }
+        try
+        {
+            await CollectAsync();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _collecting, 0);
+        }
     }
 
     private async Task CollectAsync()
     {
         try
         {
-            var now = DateTime.Now;   // 服务器本地时间存储（管理员查询/对照投诉时间直观）
-            var ts = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0)
-                .ToString("yyyy-MM-dd HH:mm:00");
+            var now = DateTime.Now; // 服务器本地时间存储（管理员查询/对照投诉时间直观）
+            var ts = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0).ToString("yyyy-MM-dd HH:mm:00");
 
             // ---- 1) 客户端增量采集 ----
             var result = await _emqx.GetClientsAsync();
@@ -109,6 +117,17 @@ public class CollectorService : BackgroundService
             }
 
             var rows = new List<MinuteStatRow>(result.Clients.Count);
+
+            // uid 重复检测 + 自动拉黑
+            try
+            {
+                await DetectAndBanDuplicateUidsAsync(result.Clients, now);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[uid-dup] 检测异常: {ex.Message}");
+            }
+
             lock (_lock)
             {
                 foreach (var c in result.Clients)
@@ -135,6 +154,7 @@ public class CollectorService : BackgroundService
                             Reconnect = rc,
                         });
                     }
+
                     _prev[key] = (c.SendOct, c.RecvOct, c.SendMsg, c.RecvMsg, c.SendPkt, c.RecvPkt);
                 }
 
@@ -149,7 +169,7 @@ public class CollectorService : BackgroundService
 
             _db.WriteMinuteStats(rows);
             LastClientCount = result.Clients.Count;
-            LastClients = result.Clients;   // 缓存在线列表（在线页读取；60s 内新鲜）
+            LastClients = result.Clients; // 缓存在线列表（在线页读取；60s 内新鲜）
             LastClientsAt = now;
 
             // ---- 2) 健康采集 ----
@@ -167,6 +187,7 @@ public class CollectorService : BackgroundService
                     var secs = (DateTime.UtcNow - _lastMsgAt).TotalSeconds;
                     if (secs > 0) msgRate = (total - lt) / secs;
                 }
+
                 _lastMsgTotal = total;
                 _lastMsgAt = DateTime.UtcNow;
             }
@@ -184,7 +205,7 @@ public class CollectorService : BackgroundService
                 HostNetRecvKbps = health?.NetRecvKbps,
                 HostNetSendKbps = health?.NetSendKbps,
                 EmqxNode = node?.Node,
-                EmqxCpuPct = node?.Load1,   // EMQX 5.x 无 CPU%，用系统 1 分钟负载（load1）代替
+                EmqxCpuPct = node?.Load1, // EMQX 5.x 无 CPU%，用系统 1 分钟负载（load1）代替
                 EmqxMemUsedPct = emqxMemPct,
                 EmqxConnections = LastClientCount,
                 EmqxMsgRate = msgRate,
@@ -211,6 +232,50 @@ public class CollectorService : BackgroundService
         }
     }
 
+    /// <summary>检测 uid 重复并自动拉黑</summary>
+    private async Task DetectAndBanDuplicateUidsAsync(IReadOnlyList<EmqxClientInfo> clients, DateTime now)
+    {
+        //按 uid 分组找重复（uid 为空的不参与——匿名客户端无身份可比）
+        var dupUidGroups = clients.Where(c => !string.IsNullOrEmpty(c.Uid)).GroupBy(c => c.Uid!).Where(g => g.Count() > 1).ToList();
+        if (dupUidGroups.Count == 0) return;
+
+        // 取每个重复 uid 下所有客户端的呼号（去重），汇总成待拉黑集合
+        var toBan = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in dupUidGroups)
+        {
+            foreach (var c in g)
+            {
+                var who = (c.Callsign ?? c.Username)?.Trim();
+                if (!string.IsNullOrEmpty(who)) toBan.Add(who);
+            }
+        }
+
+        if (toBan.Count == 0) return;
+
+        //查当前 EMQX 活跃黑名单，跳过已拉黑的
+        var alreadyBanned = _db.QueryActiveBlacklist(now).Select(b => b.Who).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var pending = toBan.Where(w => !alreadyBanned.Contains(w)).ToList();
+        if (pending.Count == 0) return;
+
+        //逐个拉黑 + 踢下线 + 留痕
+        const string reason = "身份控制: UID 重复登录";
+        foreach (var who in pending)
+        {
+            var (err, kicked) = await _emqx.BanAsync(who, reason, null); // null = 永久拉黑
+            if (err != null)
+            {
+                Console.WriteLine($"[uid-dup] 拉黑 {who} 失败: {err}");
+                continue;
+            }
+
+            _db.AddBlacklistEvent("ban", "username", who, reason, null, "auto-uid-dup", now);
+            Console.WriteLine($"[uid-dup] 已拉黑 {who}（踢出 {kicked} 个连接）");
+        }
+
+        //拉黑后即时刷新在线缓存（被踢的客户端立即从 LastClients 消失）
+        _ = CollectNowAsync();
+    }
+
     /// <summary>累计计数器差值；重连（归零）时返回 0 并标记</summary>
     private static long Delta(long prev, long cur, out bool reconnect)
     {
@@ -220,6 +285,7 @@ public class CollectorService : BackgroundService
             reconnect = true;
             return 0;
         }
+
         reconnect = false;
         return d;
     }
