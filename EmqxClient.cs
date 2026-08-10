@@ -330,7 +330,7 @@ public class EmqxClient
     {
         // 1) 写入 EMQX banned（拒绝新连接）；ALREADY_EXISTS = 已在黑名单，幂等视为成功
         var body = JsonSerializer.Serialize(new Dictionary<string, object?> { ["as"] = "username", ["who"] = who, ["reason"] = reason, ["until"] = untilRfc3339 ?? "infinity" });
-        var resp = await DoRequestAsync(HttpMethod.Post, _baseUrl + "/api/v5/banned", body, 60);
+        var resp = await DoRequestAsync(HttpMethod.Post, "/api/v5/banned", body);
         if (!resp.Ok && resp.Error != "ALREADY_EXISTS") return (resp.Error, 0);
 
         // 2) 查该呼号在线 clientid → 踢下线（banned 不自动踢已连接）
