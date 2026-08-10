@@ -1223,7 +1223,7 @@
       const conn = s.connector, mid = s.middleware, rule = s.rule;
       const line = (ok, txt) => `<div>${ok ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">❌</span>'} ${txt}</div>`;
       let html = '';
-      html += line(conn.exists, `连接器 emqx-monitor-ingest：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
+      html += line(conn.exists, `连接器 emqx-monitor-bridge：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
       html += line(mid.exists, `${s.v6 ? '动作' : '桥接'} ${s.v6 ? 'emqx-monitor-ingest-action' : 'emqx-monitor-bridge'}：${mid.exists ? '存在' : '不存在'}`);
       html += line(rule.exists && rule.enabled, `规则 emqx-monitor-topic-rule：${rule.exists ? (rule.enabled ? '存在且已启用' : '存在但未启用') : '不存在'}`);
       html += `<div style="margin-top:6px;color:${s.ok ? '#2e7d32' : '#e65100'};font-weight:600">${s.ok ? '✅ 链路正常' : '❌ 链路不完整'}</div>`;
@@ -1344,7 +1344,7 @@
         const rule = s.rule;
         const line = (ok, txt) => `<div>${ok ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">❌</span>'} ${txt}</div>`;
         let html = '';
-        html += line(conn.exists, `连接器 emqx-monitor-ingest：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
+        html += line(conn.exists, `连接器 emqx-monitor-bridge：${conn.exists ? `存在（状态 ${conn.state || '未知'}${conn.reason ? '，原因: ' + esc(conn.reason) : ''}）` : '不存在'}`);
         html += line(mid.exists, `${s.v6 ? '动作' : '桥接'} ${s.v6 ? 'emqx-monitor-ingest-action' : 'emqx-monitor-bridge'}：${mid.exists ? '存在' : '不存在'}`);
         html += line(rule.exists && rule.enabled, `规则 emqx-monitor-topic-rule：${rule.exists ? (rule.enabled ? '存在且已启用' : '存在但未启用') : '不存在'}`);
         html += `<div style="margin-top:6px;color:${s.ok ? '#2e7d32' : '#e65100'};font-weight:600">${s.ok ? '✅ 链路正常，主题统计工作正常' : '❌ 链路不完整'}</div>`;

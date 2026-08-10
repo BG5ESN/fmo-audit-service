@@ -14,3 +14,11 @@ fas.json
 .vs/
 .vscode/
 *.user
+.idea/
+*.suo
+*.pid
+*.log
+*.tmp
+*.swp
+*.swn
+*.swx
