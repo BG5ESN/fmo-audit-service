@@ -58,6 +58,7 @@ EOF
     osx-*)
       # macOS: 二进制 + README（mac 无 systemd，直接运行/launchd）
       cp "publish/$RID/fmo-audit-service" "$STAGE/"
+      chmod +x "$STAGE/fmo-audit-service"
       cp README.md "$STAGE/"
       tar czf "$DIST/fmo-audit-service-v${VER}-${RID}.tar.gz" -C "$STAGE" .
       rm -rf "$STAGE"
@@ -65,6 +66,8 @@ EOF
     *)
       # Linux 系（x64/arm64/arm）: 二进制 + README → tar.gz
       cp "publish/$RID/fmo-audit-service" "$STAGE/"
+      # Windows 上的 tar(MSYS/bsdtar) 不保留 Unix 可执行位，显式 chmod，保证归档内 755
+      chmod +x "$STAGE/fmo-audit-service"
       cp README.md "$STAGE/"
       tar czf "$DIST/fmo-audit-service-v${VER}-${RID}.tar.gz" -C "$STAGE" .
       rm -rf "$STAGE"

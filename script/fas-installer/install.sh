@@ -11,6 +11,7 @@ set -e
 META_URL="https://bg5esn.com/share/fmo/fas.json"
 SCRIPT_VERSION="1.0.0"
 INSTALL_DIR="/opt/fmo-fas"
+CACHE_DIR="/var/cache/fmo-fas"
 SERVICE_NAME="fmo-fas"
 RUN_USER="fmo-audit"
 TMPDIR_INSTALL=""
@@ -86,7 +87,8 @@ mkdir -p "$TMPDIR_INSTALL/extract"
 # 下载的是 tar.gz 包（build-all 产物，对齐 SAS），解压找主程序
 tar xzf "$ARCHIVE" -C "$TMPDIR_INSTALL/extract"
 BIN_FILE="$TMPDIR_INSTALL/extract/fmo-audit-service"
-if [ ! -f "$BIN_FILE" ] || [ ! -x "$BIN_FILE" ]; then
+# 部分平台打出的 tar 不带可执行位，此处只校验存在性，安装时统一 chmod +x
+if [ ! -f "$BIN_FILE" ]; then
     err "下载文件解压异常，未找到 fmo-audit-service 主程序"
     err "您可以尝试安装组件后重试，或手动部署，参考: https://bg5esn.com/docs/fmo-fas-install-guide/"
     exit 1
@@ -110,6 +112,9 @@ fi
 cp "$BIN_FILE" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/fmo-audit-service"
 chown -R "$RUN_USER:$RUN_USER" "$INSTALL_DIR"
+# 单文件自解压缓存目录（ProtectSystem=strict 下二进制目录只读，解压必须落到这里）
+mkdir -p "$CACHE_DIR"
+chown "$RUN_USER:$RUN_USER" "$CACHE_DIR"
 rm -rf "$TMPDIR_INSTALL"
 ok "      完成"
 
@@ -130,6 +135,7 @@ ExecStart=$INSTALL_DIR/fmo-audit-service
 WorkingDirectory=$INSTALL_DIR
 Environment=EMQX_MONITOR_PORT=9527
 Environment=EMQX_MONITOR_DB=$INSTALL_DIR/fmo-audit-service.db
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=$CACHE_DIR
 # on-failure + 自动重启：OTA 更新时进程退出即自动拉起新版本
 Restart=on-failure
 RestartSec=5
@@ -137,6 +143,8 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# ProtectSystem=strict 下数据目录与单文件解压缓存目录必须显式可写
+ReadWritePaths=$INSTALL_DIR $CACHE_DIR
 ProtectHome=true
 
 [Install]

@@ -83,6 +83,8 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(p, os.path.relpath(p, src))
 EOF
   else
+    # Windows 上的 tar(MSYS/bsdtar) 不保留 Unix 可执行位，显式 chmod，保证归档内 755
+    chmod +x "$STAGE/fmo-audit-service" 2>/dev/null || true
     OUT="$DIST/fmo-audit-service-${RID}.tar.gz"
     tar czf "$OUT" -C "$STAGE" .
   fi

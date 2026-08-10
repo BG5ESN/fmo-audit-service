@@ -5,6 +5,7 @@
 # ============================================================
 set -e
 INSTALL_DIR="/opt/fmo-fas"
+CACHE_DIR="/var/cache/fmo-fas"
 SERVICE_NAME="fmo-fas"
 RUN_USER="fmo-audit"
 
@@ -31,6 +32,7 @@ fi
 
 # 删除数据目录（执行卸载即用户明确意愿，直接彻底删除，对齐 SAS）
 rm -rf "$INSTALL_DIR"
+rm -rf "$CACHE_DIR"
 ok "已删除 $INSTALL_DIR"
 
 # 删除专用用户

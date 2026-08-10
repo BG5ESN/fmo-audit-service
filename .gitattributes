@@ -1,0 +1,4 @@
+# 行尾规范（防止 Windows 检出 CRLF 上传到 Linux 后破坏 .sh 脚本）
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.py text eol=lf
