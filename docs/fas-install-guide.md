@@ -6,7 +6,7 @@
 
 | 项 | 要求 |
 |---|---|
-| MQTT Broker | EMQX 5.8+ 或 6.x（与 FMO 服务器同一套即可） |
+| MQTT Broker | EMQX 5.8+ 与 FMO 服务器同一套即可 |
 | API 密钥 | EMQX Dashboard → 管理 → **API 密钥** → 新建（角色 administrator；secret 只显示一次） |
 | 网络 | FAS 与 EMQX 互通；Webhook 地址需 EMQX 所有节点可达（异地集群用公网地址） |
 
