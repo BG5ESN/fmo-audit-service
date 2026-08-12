@@ -368,8 +368,10 @@ app.MapPost("/api/ingest", async (HttpContext ctx, TopicIngestService ingest) =>
         {
             if (ca.TryGetProperty("callsign", out var cs) && cs.ValueKind == JsonValueKind.String)
                 callsign = cs.GetString();
-            if (ca.TryGetProperty("uid", out var cu) && cu.ValueKind == JsonValueKind.String)
-                uid = cu.GetString();
+            if (ca.TryGetProperty("uid", out var cu))
+            {
+                uid = cu.ValueKind == JsonValueKind.String ? cu.GetString() : cu.GetRawText();
+            }
         }
         if (!string.IsNullOrEmpty(callsign)) username = callsign;
         var clientid = root.TryGetProperty("clientid", out var c) ? c.GetString() : null;
