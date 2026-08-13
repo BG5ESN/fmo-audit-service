@@ -52,15 +52,17 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 **或命令行配置（替代步骤 2-3，适合批量部署/无浏览器环境）**：
 
 ```bash
-fmo-audit-service --configure --emqx http://<EMQX地址> --api-key <key> --api-secret <secret>
+# 环境变量方式（推荐，Secret 不进 shell history）
+EMQX_URL=http://<EMQX地址> \
+EMQX_API_KEY=<key> \
+EMQX_API_SECRET=<secret> \
+EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db \
+fmo-audit-service --configure
 ```
 
 自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
-⚠️ Linux systemd 部署（install.sh 安装）时**必须带上服务的 db 路径**，否则配置写进默认数据目录、服务读不到：
-
-```bash
-EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db fmo-audit-service --configure --emqx ... --api-key ... --api-secret ...
-```
+也支持命令行参数（优先级更高）：`fmo-audit-service --configure --emqx <url> --api-key <key> --api-secret <secret>`。
+⚠️ Linux systemd 部署必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`（服务 unit 的 db 路径），否则配置写进默认数据目录、服务读不到。
 
 ## 反查伪造数据包
 

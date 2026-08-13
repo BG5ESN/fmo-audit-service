@@ -15,11 +15,14 @@ public static class CliConfigure
             return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
         }
 
-        var emqx = GetArg("--emqx");
-        var key = GetArg("--api-key");
-        var secret = GetArg("--api-secret");
+        // 参数优先级：命令行参数 > 环境变量（EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET，
+        // 环境变量方式适合 env 文件/脚本注入，Secret 不进 shell history）
+        var emqx = GetArg("--emqx") ?? Environment.GetEnvironmentVariable("EMQX_URL");
+        var key = GetArg("--api-key") ?? Environment.GetEnvironmentVariable("EMQX_API_KEY");
+        var secret = GetArg("--api-secret") ?? Environment.GetEnvironmentVariable("EMQX_API_SECRET");
         if (string.IsNullOrEmpty(emqx) || string.IsNullOrEmpty(key) || string.IsNullOrEmpty(secret))
-            return ("用法: fmo-audit-service --configure --emqx http://IP:PORT --api-key <key> --api-secret <secret>", null);
+            return ("用法: fmo-audit-service --configure --emqx http://IP:PORT --api-key <key> --api-secret <secret>\n" +
+                    "      或通过环境变量: EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET（命令行参数优先）", null);
 
         // db 路径（与主程序一致：EMQX_MONITOR_DB 或用户数据目录）
         var dbPath = Environment.GetEnvironmentVariable("EMQX_MONITOR_DB");

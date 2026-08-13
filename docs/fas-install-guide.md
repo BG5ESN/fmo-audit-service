@@ -61,15 +61,17 @@ Windows 防火墙放行 9527 端口。
 **或命令行配置（替代步骤 3-4，批量部署/无浏览器环境）**：
 
 ```bash
-fmo-audit-service --configure --emqx http://<EMQX地址> --api-key <key> --api-secret <secret>
+# 环境变量方式（推荐，Secret 不进 shell history）
+EMQX_URL=http://<EMQX地址> \
+EMQX_API_KEY=<key> \
+EMQX_API_SECRET=<secret> \
+EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db \
+fmo-audit-service --configure
 ```
 
 自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
-⚠️ **必须带上服务的 db 路径**（install.sh 安装的 unit 里 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`，手动 shell 里没有该变量，会写进默认数据目录导致服务读不到）：
-
-```bash
-EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db fmo-audit-service --configure --emqx ... --api-key ... --api-secret ...
-```
+也支持命令行参数（优先级更高）：`fmo-audit-service --configure --emqx <url> --api-key <key> --api-secret <secret>`。
+⚠️ **必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`**（install.sh 安装的 unit 服务 db 路径），手动 shell 里没有该变量，不带会写进默认数据目录导致服务读不到。
 
 ## 升级
 
