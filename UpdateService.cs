@@ -72,15 +72,15 @@ public static class UpdateService
     }
 
     /// <summary>执行更新：下载最新版 → 生成延迟替换脚本 → spawn。返回 (错误, 提示)</summary>
-    public static async Task<(string? Error, string? Message)> ApplyAsync()
+    public static async Task<(string? Error, string? Message, bool Replaced)> ApplyAsync()
     {
         if (DetectMode() == UpdateMode.Docker)
-            return ("容器内不支持自更新", "Docker 部署请使用: docker pull 新镜像 && docker compose up -d");
+            return ("容器内不支持自更新", "Docker 部署请使用: docker pull 新镜像 && docker compose up -d", false);
 
         var (current, latest, hasUpdate, err) = await CheckAsync();
-        if (err != null) return (err, null);
-        if (latest == null) return ("元数据无最新版本", null);
-        if (!hasUpdate) return (null, $"已是最新版本 v{current}");
+        if (err != null) return (err, null, false);
+        if (latest == null) return ("元数据无最新版本", null, false);
+        if (!hasUpdate) return (null, $"已是最新版本 v{current}", false);
 
         try
         {
@@ -91,10 +91,10 @@ public static class UpdateService
             var rid = RuntimeInformation.RuntimeIdentifier ?? "";
             if (!doc.RootElement.TryGetProperty("assets", out var assets)
                 || !assets.TryGetProperty(rid, out var asset))
-                return ($"元数据中没有当前平台 {rid} 的下载地址", null);
+                return ($"元数据中没有当前平台 {rid} 的下载地址", null, false);
             var url = asset.ValueKind == JsonValueKind.String ? asset.GetString()
                      : (asset.TryGetProperty("url", out var u) ? u.GetString() : null);
-            if (string.IsNullOrEmpty(url)) return ("元数据缺少下载 URL", null);
+            if (string.IsNullOrEmpty(url)) return ("元数据缺少下载 URL", null, false);
 
             // 2) 下载到临时目录（流式）
             var tempDir = Path.Combine(Path.GetTempPath(), "fas_update");
@@ -135,7 +135,7 @@ public static class UpdateService
 
             // 6) 延迟替换脚本：等本进程退出 → 覆盖自身 → 清理
             var exePath = Environment.ProcessPath ?? "";
-            if (string.IsNullOrEmpty(exePath)) return ("无法确定当前可执行文件路径", null);
+            if (string.IsNullOrEmpty(exePath)) return ("无法确定当前可执行文件路径", null, false);
             var scriptPath = Path.Combine(Path.GetTempPath(),
                 RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "fas_update.bat" : "fas_update.sh");
             var pid = Environment.ProcessId;
@@ -172,11 +172,11 @@ public static class UpdateService
             else
                 System.Diagnostics.Process.Start("sh", scriptPath);
 
-            return (null, $"v{latest} 已下载，服务即将自动重启");
+            return (null, $"v{latest} 已下载", true);
         }
         catch (Exception ex)
         {
-            return ($"更新失败: {ex.Message}", null);
+            return ($"更新失败: {ex.Message}", null, false);
         }
     }
 
