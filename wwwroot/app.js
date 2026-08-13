@@ -1133,29 +1133,74 @@
     }
     $('up-check').onclick = upCheck;
     $('up-apply').onclick = async () => {
-      if (!confirm('确认更新到最新版本？更新期间服务将自动重启（约 10 秒），页面会短暂中断。')) return;
-      const msg = $('up-msg'), prog = $('up-progress');
-      msg.className = 'form-msg';
-      msg.textContent = '正在下载并校验…';
-      prog.textContent = '（大版本下载可能需要 1-2 分钟，请勿关闭页面）';
+      if (!confirm('确认更新到最新版本？更新期间服务将自动重启，页面会短暂中断。')) return;
+      const msg = $('up-msg'), box = $('up-progress-box');
+      const stageText = $('up-stage-text'), barFill = $('up-progress-fill'), progText = $('up-progress-text'), stepsEl = $('up-steps');
       $('up-apply').disabled = true;
+      msg.className = 'form-msg';
+      msg.textContent = '正在启动更新…';
+      box.style.display = '';
+
+      const steps = ['下载', '解压', '替换', '重启'];
+      const stageStep = { downloading: 0, extracting: 1, preparing: 2, ready: 2, restarting: 3 };
+      const renderSteps = stage => {
+        const cur = stageStep[stage] ?? 0;
+        stepsEl.innerHTML = steps.map((s, i) =>
+          i < cur ? `<span style="color:#2e7d32">✓${s}</span>`
+          : i === cur ? `<span style="color:#000;font-weight:600">●${s}</span>`
+          : `<span style="color:#bbb">○${s}</span>`
+        ).join('　');
+      };
+      const setStage = (stage, text) => { stageText.textContent = text; renderSteps(stage); };
+      const setBar = pct => { barFill.style.width = (pct == null ? 0 : pct) + '%'; };
+      let timer = null;
+      const finish = (kind, text) => {
+        if (timer) clearInterval(timer);
+        msg.className = 'form-msg ' + (kind === 'ok' ? 'ok' : 'err');
+        msg.textContent = text;
+        box.style.display = 'none';
+        $('up-apply').disabled = false;
+      };
+
       try {
         const d = await api('/api/update/apply', { method: 'POST' });
-        if (d.ok) {
-          msg.className = 'form-msg ok';
-          msg.textContent = d.message || '更新中，服务将自动重启';
-          prog.textContent = '服务重启后（约 10 秒）请刷新页面查看新版本号';
-          setTimeout(() => { location.reload(); }, 12000);
-        } else {
-          msg.className = 'form-msg err';
-          msg.textContent = d.error || '更新失败';
-          $('up-apply').disabled = false;
+        if (!d.ok) { finish('err', d.error || '启动更新失败'); return; }
+      } catch (e) { finish('err', '启动更新失败（服务不可用）'); return; }
+
+      timer = setInterval(async () => {
+        try {
+          const p = await api('/api/update/progress');
+          if (p.stage === 'checking') { setStage('checking', '正在检查更新…'); setBar(0); progText.textContent = ''; }
+          else if (p.stage === 'downloading') {
+            setStage('downloading', '正在下载新版本…');
+            setBar(p.percent);
+            const b = fmtBytes(p.bytes_read || 0);
+            progText.textContent = p.percent != null
+              ? `${b} / ${fmtBytes(p.total_bytes || 0)} · ${p.percent.toFixed(1)}%`
+              : `${b}（未知大小）`;
+          }
+          else if (p.stage === 'extracting') { setStage('extracting', '解压更新包…'); setBar(100); progText.textContent = ''; }
+          else if (p.stage === 'preparing') { setStage('preparing', '生成替换脚本…'); setBar(100); progText.textContent = ''; }
+          else if (p.stage === 'ready') { setStage('ready', '已就绪，服务即将重启…'); setBar(100); progText.textContent = ''; }
+          else if (p.stage === 'done') { finish('ok', p.message || '已是最新版本'); }
+          else if (p.stage === 'error') { finish('err', p.message || '更新失败'); }
+        } catch (e) {
+          // 轮询失败 = 进程已退出（重启中）
+          if (timer) clearInterval(timer);
+          setStage('restarting', '服务正在重启…');
+          setBar(100);
+          progText.textContent = '';
+          const deadline = Date.now() + 60000;
+          const reconnect = async () => {
+            if (Date.now() > deadline) { stageText.textContent = '重启超时，请手动刷新页面'; return; }
+            try {
+              await fetch('/api/update/check', { credentials: 'same-origin' });
+              location.reload();
+            } catch { setTimeout(reconnect, 2000); }
+          };
+          setTimeout(reconnect, 2000);
         }
-      } catch (e) {
-        // 更新成功时进程退出可能导致连接中断——静默等待自动刷新
-        prog.textContent = '服务正在重启，请稍后刷新页面…';
-        setTimeout(() => { location.reload(); }, 12000);
-      }
+      }, 300);
     };
     upCheck();
 
