@@ -58,6 +58,20 @@ Windows 防火墙放行 9527 端口。
 4. 启用主题统计：Webhook 地址同局域网用 IP 快速选择按钮；异地集群改公网可达地址
 5. 身份控制默认启用（最高保护）——包头身份与连接身份不一致的包，发送者会被自动拉黑
 
+**或命令行配置（替代步骤 3-4，批量部署/无浏览器环境）**：
+
+```bash
+# 环境变量方式（推荐，Secret 不进 shell history）
+EMQX_URL=http://<EMQX地址> \
+EMQX_API_KEY=<key> \
+EMQX_API_SECRET=<secret> \
+EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db \
+fmo-audit-service --configure
+```
+
+自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
+⚠️ **必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`**（install.sh 安装的 unit 服务 db 路径），手动 shell 里没有该变量，不带会写进默认数据目录导致服务读不到。
+
 ## 升级
 
 | 方式 | 操作 |

@@ -23,4 +23,19 @@ public static class WebHelpers
             v = "'" + v;
         return v.Contains(',') || v.Contains('"') ? $"\"{v.Replace("\"", "\"\"")}\"" : v;
     }
+
+    /// <summary>本机出口 IP（UDP 连 8.8.8.8 触发路由选择，不发包；失败回退 127.0.0.1）——CLI --configure 的 webhook 地址用</summary>
+    public static string GetLanIp()
+    {
+        try
+        {
+            using var sock = new System.Net.Sockets.UdpClient("8.8.8.8", 80);
+            var ip = (sock.Client.LocalEndPoint as System.Net.IPEndPoint)?.Address.ToString();
+            return string.IsNullOrEmpty(ip) || ip == "0.0.0.0" ? "127.0.0.1" : ip;
+        }
+        catch
+        {
+            return "127.0.0.1";
+        }
+    }
 }

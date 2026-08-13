@@ -33,6 +33,15 @@ if (args.Contains("--check") || args.Contains("--update"))
     return;
 }
 
+// ---- CLI 命令：--configure 一次性配置（保存 EMQX 连接 + 自动设置主题统计 bridge）----
+if (args.Contains("--configure"))
+{
+    var (err, msg) = await CliConfigure.RunAsync();
+    Console.WriteLine(err ?? msg ?? "");
+    Environment.Exit(err != null ? 1 : 0);
+    return;
+}
+
 // ---- 配置：端口（环境变量优先，默认 9527）----
 var port = int.TryParse(Environment.GetEnvironmentVariable("EMQX_MONITOR_PORT"), out var envPort) ? envPort : 9527;
 
