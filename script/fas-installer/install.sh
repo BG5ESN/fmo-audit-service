@@ -137,6 +137,8 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# strict 下除 API 文件系统外全局只读；放行安装目录（db 写入 + OTA 二进制替换都需要）
+ReadWritePaths=$INSTALL_DIR
 ProtectHome=true
 
 [Install]
