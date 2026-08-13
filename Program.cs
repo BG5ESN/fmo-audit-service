@@ -36,7 +36,7 @@ if (args.Contains("--check") || args.Contains("--update"))
 // ---- CLI 命令：--configure 一次性配置（保存 EMQX 连接 + 自动设置主题统计 bridge）----
 if (args.Contains("--configure"))
 {
-    var (err, msg) = await CliConfigure.RunAsync(args);
+    var (err, msg) = await CliConfigure.RunAsync();
     Console.WriteLine(err ?? msg ?? "");
     Environment.Exit(err != null ? 1 : 0);
     return;

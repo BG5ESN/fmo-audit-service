@@ -70,7 +70,6 @@ fmo-audit-service --configure
 ```
 
 自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
-也支持命令行参数（优先级更高）：`fmo-audit-service --configure --emqx <url> --api-key <key> --api-secret <secret>`。
 ⚠️ **必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`**（install.sh 安装的 unit 服务 db 路径），手动 shell 里没有该变量，不带会写进默认数据目录导致服务读不到。
 
 ## 升级

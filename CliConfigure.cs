@@ -7,22 +7,17 @@ namespace EmqxMonitor;
 /// </summary>
 public static class CliConfigure
 {
-    public static async Task<(string? Error, string? Message)> RunAsync(string[] args)
+    public static async Task<(string? Error, string? Message)> RunAsync()
     {
-        string? GetArg(string name)
-        {
-            var i = Array.IndexOf(args, name);
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
-        }
-
-        // 参数优先级：命令行参数 > 环境变量（EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET，
-        // 环境变量方式适合 env 文件/脚本注入，Secret 不进 shell history）
-        var emqx = GetArg("--emqx") ?? Environment.GetEnvironmentVariable("EMQX_URL");
-        var key = GetArg("--api-key") ?? Environment.GetEnvironmentVariable("EMQX_API_KEY");
-        var secret = GetArg("--api-secret") ?? Environment.GetEnvironmentVariable("EMQX_API_SECRET");
+        // 配置一律走环境变量：EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET（+ 可选 EMQX_MONITOR_DB），
+        // 不带命令行参数 —— Secret 走命令行会进 shell history，环境变量方式强制安全路径
+        var emqx = Environment.GetEnvironmentVariable("EMQX_URL");
+        var key = Environment.GetEnvironmentVariable("EMQX_API_KEY");
+        var secret = Environment.GetEnvironmentVariable("EMQX_API_SECRET");
         if (string.IsNullOrEmpty(emqx) || string.IsNullOrEmpty(key) || string.IsNullOrEmpty(secret))
-            return ("用法: fmo-audit-service --configure --emqx http://IP:PORT --api-key <key> --api-secret <secret>\n" +
-                    "      或通过环境变量: EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET（命令行参数优先）", null);
+            return ("用法: 先设置环境变量再执行 fmo-audit-service --configure\n" +
+                    "  EMQX_URL=<EMQX地址> EMQX_API_KEY=<key> EMQX_API_SECRET=<secret> [EMQX_MONITOR_DB=<服务db路径>] \\\n" +
+                    "    fmo-audit-service --configure", null);
 
         // db 路径（与主程序一致：EMQX_MONITOR_DB 或用户数据目录）
         var dbPath = Environment.GetEnvironmentVariable("EMQX_MONITOR_DB");
