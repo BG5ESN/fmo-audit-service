@@ -172,16 +172,17 @@ public static class UpdateService
                 newExe = archivePath;
             }
 
-            // 6) 延迟替换脚本：等本进程退出 → 覆盖自身 → 清理
+            // 6) 替换二进制（平台分支：Windows 文件锁用延迟脚本；Linux 直接 mv）
             onProgress?.Invoke(new UpdateProgress { Stage = "preparing" });
             var exePath = Environment.ProcessPath ?? "";
             if (string.IsNullOrEmpty(exePath)) return ("无法确定当前可执行文件路径", null, false);
-            var scriptPath = Path.Combine(Path.GetTempPath(),
-                RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "fas_update.bat" : "fas_update.sh");
-            var pid = Environment.ProcessId;
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                // Windows：运行中的 exe 有文件锁，不能直接覆盖。
+                // 延迟替换脚本：等本进程退出 → move → schtasks 主动重启计划任务
+                var pid = Environment.ProcessId;
+                var scriptPath = Path.Combine(Path.GetTempPath(), "fas_update.bat");
                 File.WriteAllText(scriptPath,
                     $"@echo off\r\n" +
                     $":wait\r\n" +
@@ -195,24 +196,23 @@ public static class UpdateService
                     // 主动重启计划任务（确定性、立即；不依赖 RestartCount 的失败判定）
                     $"schtasks /run /tn fmo-fas >nul\r\n" +
                     $"del \"%~f0\" >nul 2>nul & exit /b\r\n");
+                System.Diagnostics.Process.Start("cmd", $"/c \"{scriptPath}\"");
             }
             else
             {
-                File.WriteAllText(scriptPath,
-                    $"#!/bin/sh\n" +
-                    $"while kill -0 {pid} 2>/dev/null; do sleep 1; done\n" +
-                    $"mv \"{newExe}\" \"{exePath}\"\n" +
-                    $"chmod +x \"{exePath}\"\n" +
-                    $"rm -rf \"{tempDir}\"\n" +
-                    $"echo \"FMO Audit Service updated to v{latest}. systemd will restart it.\"\n" +
-                    $"rm \"$0\"\n");
-                System.Diagnostics.Process.Start("chmod", $"+x \"{scriptPath}\"")?.WaitForExit();
+                // Linux：mv 覆盖运行中的二进制是安全的（rename/inode 替换，运行中的旧进程继续用旧 inode），
+                // 直接替换后由 systemd Restart=on-failure 拉起新版本，不用延迟脚本——
+                // systemd 默认 KillMode=control-group 会在主进程退出时清理 cgroup 残留子进程，
+                // 延迟脚本会被 SIGTERM 杀掉导致 mv 从未执行（OTA 失败的根因）
+                // 注意：下载目录在 /tmp（PrivateTmp=true 时是私有 tmpfs，与 /opt 跨文件系统），
+                // 直接跨 FS rename 会 EXDEV 回退 copy+O_TRUNC → 运行中二进制 ETXTBSY 失败；
+                // 因此先 copy 到安装目录内临时文件（同 FS），再同 FS rename 原子覆盖
+                var tmpExe = exePath + ".new";
+                File.Copy(newExe, tmpExe, overwrite: true);
+                File.Move(tmpExe, exePath, overwrite: true);
+                System.Diagnostics.Process.Start("chmod", $"+x \"{exePath}\"")?.WaitForExit();
+                Directory.Delete(tempDir, true);
             }
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                System.Diagnostics.Process.Start("cmd", $"/c \"{scriptPath}\"");
-            else
-                System.Diagnostics.Process.Start("sh", scriptPath);
 
             onProgress?.Invoke(new UpdateProgress { Stage = "ready", Message = $"v{latest} 已就绪，即将重启" });
             return (null, $"v{latest} 已下载", true);

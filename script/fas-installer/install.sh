@@ -143,7 +143,8 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-# ProtectSystem=strict 下数据目录与单文件解压缓存目录必须显式可写
+# strict 下除 API 文件系统外全局只读；放行安装目录（db 写入 + OTA 二进制替换），
+# 单文件解压缓存目录同样必须显式可写（DOTNET_BUNDLE_EXTRACT_BASE_DIR）
 ReadWritePaths=$INSTALL_DIR $CACHE_DIR
 ProtectHome=true
 
