@@ -62,7 +62,7 @@ Windows 防火墙放行 9527 端口。
 
 | 方式 | 操作 |
 |---|---|
-| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验；Linux systemd 自动重启，Windows 计划任务需手动 `Start-ScheduledTask fmo-fas`） |
+| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载替换；Linux systemd / Windows 计划任务均自动重启） |
 | 命令行 | Linux: `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
 
 更新安全性：下载走 HTTPS（传输完整性由 TLS 保障），来源为官方 bg5esn.com。
@@ -160,3 +160,7 @@ location /api/login { limit_req zone=login burst=5; proxy_pass http://127.0.0.1:
 2. **客户端认证配置错误**：已有用户将 EMQX 的 HTTP **客户端认证**（Authentication）误配成了**客户端授权**（Authorization）。请检查自己的配置是否犯了如上错误——认证建在"认证"下，不是"授权"下。
 
 > 提示：修正配置后，之前被误拉的呼号可在 FAS 黑名单页手动解封。
+
+## 参考
+
+- EMQX REST API 文档（开发/集成时查 API 字段与端点）：https://docs.emqx.com/zh/emqx/latest/admin/api.html

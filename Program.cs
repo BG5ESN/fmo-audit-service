@@ -11,15 +11,22 @@ if (args.Contains("--check") || args.Contains("--update"))
 {
     if (args.Contains("--update"))
     {
-        var (err, msg) = await UpdateService.ApplyAsync();
-        Console.WriteLine(err ?? msg ?? "");
-        if (err != null) { Environment.Exit(1); return; }
-        Console.WriteLine("二进制已替换。若以服务运行，请执行: systemctl restart fmo-fas");
+        var (err, msg, replaced) = await UpdateService.ApplyAsync();
+        if (err != null) { Console.WriteLine($"更新失败: {err}"); Environment.Exit(1); return; }
+        Console.WriteLine(msg);
+        if (replaced)
+        {
+            // 延迟替换脚本会在本进程退出后覆盖二进制，届时再提示重启
+            if (OperatingSystem.IsWindows())
+                Console.WriteLine("本进程退出后自动替换，完成后请执行: Start-ScheduledTask fmo-fas");
+            else
+                Console.WriteLine("本进程退出后自动替换。若以 systemd 服务运行: systemctl restart fmo-fas");
+        }
         Environment.Exit(0);
         return;
     }
     var (cur, latest, has, cerr) = await UpdateService.CheckAsync();
-    Console.WriteLine($"FMO Audit Service version: {cur}");
+    Console.WriteLine($"当前版本: {cur}");
     if (cerr != null) { Console.WriteLine(cerr); Environment.Exit(1); return; }
     Console.WriteLine(has ? $"发现新版本 v{latest}！执行 fmo-audit-service --update 更新" : $"已是最新版本 v{latest}");
     Environment.Exit(0);
@@ -846,20 +853,25 @@ app.MapGet("/api/update/check", async () =>
     });
 });
 
-// POST /api/update/apply — 执行更新（下载+sha256 校验+替换，成功后服务自动退出由 systemd 拉起）
+// POST /api/update/apply — 执行更新（下载+替换，成功后以非 0 退出码退出，触发 systemd/计划任务自动重启）
 app.MapPost("/api/update/apply", async (HttpContext ctx) =>
 {
     if (UpdateService.DetectMode() == UpdateMode.Docker)
         return Results.Json(new { ok = false, error = "容器内不支持自更新，请使用 docker pull 更新镜像" });
 
-    var (err, msg) = await UpdateService.ApplyAsync();
+    var (err, msg, replaced) = await UpdateService.ApplyAsync();
     if (err != null)
         return Results.Json(new { ok = false, error = err });
 
-    // 先返回响应，再延迟退出进程 → systemd Restart=on-failure 自动拉起新版本
-    await ctx.Response.WriteAsJsonAsync(new { ok = true, message = msg ?? "更新中，服务将自动重启" });
+    // 已是最新版本（无更新）→ 不退出、不重启，直接返回提示
+    if (!replaced)
+        return Results.Json(new { ok = true, message = msg });
+
+    // 先返回响应，再延迟退出。退出码必须非 0：systemd Restart=on-failure 与
+    // Windows 计划任务 RestartCount 都只对非 0 退出码触发自动重启（Exit(0) 会让服务停摆）
+    await ctx.Response.WriteAsJsonAsync(new { ok = true, message = $"{msg}，服务将自动重启" });
     await ctx.Response.Body.FlushAsync();
-    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(0); });
+    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(1); });
     return Results.Empty;
 });
 

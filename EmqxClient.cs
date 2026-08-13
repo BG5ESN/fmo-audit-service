@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -811,6 +812,7 @@ public class EmqxClientInfo
 
     /// <summary>客户端属性（认证时服务端写入）：callsign=呼号, uid=用户编号。呼号追踪优先于此字段</summary>
     [JsonPropertyName("client_attrs")]
+    [JsonConverter(typeof(TolerantStringDictConverter))]
     public Dictionary<string, string>? ClientAttrs { get; set; }
 
     /// <summary>呼号（client_attrs.callsign，可能为 null）</summary>
@@ -820,6 +822,56 @@ public class EmqxClientInfo
     /// <summary>用户编号（client_attrs.uid，可能为 null）</summary>
     public string? Uid
         => ClientAttrs is { } attrs && attrs.TryGetValue("uid", out var u) ? u : null;
+}
+
+/// <summary>
+/// client_attrs 容错字典转换器：EMQX 可能把 uid 存成 JSON 数字，而模型字段是 string，
+/// 默认 Dictionary&lt;string,string&gt; 反序列化遇到数字会抛 JsonException，导致整个 /clients 采集崩溃。
+/// 此转换器把非字符串值归一为字符串：number→原始文本、bool→"true"/"false"、null→空串。
+/// </summary>
+public sealed class TolerantStringDictConverter : JsonConverter<Dictionary<string, string>>
+{
+    public override Dictionary<string, string> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject)
+            throw new JsonException("client_attrs 应为 JSON 对象");
+
+        var dict = new Dictionary<string, string>();
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject) break;
+            if (reader.TokenType != JsonTokenType.PropertyName)
+                throw new JsonException("client_attrs 应为键值对对象");
+
+            var key = reader.GetString()!;
+            reader.Read();
+            dict[key] = reader.TokenType switch
+            {
+                JsonTokenType.String => reader.GetString()!,
+                JsonTokenType.Number => GetRawText(ref reader),
+                JsonTokenType.True => "true",
+                JsonTokenType.False => "false",
+                JsonTokenType.Null => string.Empty,
+                _ => GetRawText(ref reader)
+            };
+        }
+        return dict;
+    }
+
+    /// <summary>取 reader 当前位置的原始 JSON 文本（数字等非字符串值）</summary>
+    private static string GetRawText(ref Utf8JsonReader reader)
+    {
+        var bytes = reader.HasValueSequence ? reader.ValueSequence.ToArray() : reader.ValueSpan.ToArray();
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    public override void Write(Utf8JsonWriter writer, Dictionary<string, string> value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        foreach (var kv in value)
+            writer.WriteString(kv.Key, kv.Value);
+        writer.WriteEndObject();
+    }
 }
 
 public class RuleInfo

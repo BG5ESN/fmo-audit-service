@@ -59,7 +59,7 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 
 | 操作 | 方式 |
 |---|---|
-| 升级 | 配置页「版本与更新」按钮；Linux 命令行 `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启；Windows 计划任务更新后需 `Start-ScheduledTask fmo-fas`） |
+| 升级 | 配置页「版本与更新」按钮（更新后 systemd / Windows 计划任务自动重启）；Linux 命令行 `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启；Windows CLI 手动升级后需 `Start-ScheduledTask fmo-fas`） |
 | 卸载 | Linux: `curl -fsSL https://bg5esn.com/share/fmo/fas-installer/uninstall.sh \| sudo bash`；Windows: `irm https://bg5esn.com/share/fmo/fas-installer/uninstall.ps1 -OutFile "$env:TEMP\fas-uninstall.ps1"; iex (Get-Content "$env:TEMP\fas-uninstall.ps1" -Raw -Encoding UTF8)` |
 
 ## 环境变量
