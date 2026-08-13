@@ -114,6 +114,9 @@ systemctl restart fmo-fas       # 重启
 | `EMQX_MONITOR_DB` | 用户数据目录 | SQLite 数据库路径 |
 | `EMQX_MONITOR_TRUST_PROXY` | - | 反代场景信任 `X-Forwarded-For` 计算客户端 IP（设为 1 启用） |
 | `FAS_UPDATE_URL` | `https://bg5esn.com/share/fmo/fas.json` | OTA 更新元数据地址 |
+| `EMQX_URL` | - | 命令行配置（--configure）用：EMQX 地址 |
+| `EMQX_API_KEY` | - | 命令行配置（--configure）用：API 密钥 Key |
+| `EMQX_API_SECRET` | - | 命令行配置（--configure）用：API 密钥 Secret |
 
 ## 安全部署选项
 
