@@ -189,10 +189,10 @@ public static class UpdateService
                     $"if not errorlevel 1 (\r\n" +
                     $"  timeout /t 1 /nobreak >nul\r\n" +
                     $"  goto wait\r\n)\r\n" +
-                    $"move /y \"{newExe}\" \"{exePath}\"\r\n" +
-                    $"rmdir /s /q \"{tempDir}\"\r\n" +
+                    $"move /y \"{newExe}\" \"{exePath}\" >nul\r\n" +
+                    $"rmdir /s /q \"{tempDir}\" >nul 2>nul\r\n" +
                     $"echo FMO Audit Service updated to v{latest}. The scheduled task will restart it.\r\n" +
-                    $"del \"%~f0\"\r\n");
+                    $"del \"%~f0\" >nul 2>nul & exit /b\r\n");
             }
             else
             {
