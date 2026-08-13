@@ -49,6 +49,19 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 3. 启用主题统计：填主题（默认 `FMO/RAW`），自动在 EMQX 上配置规则引擎
 4. 身份控制默认启用（最高保护）——包头与连接身份不一致的发送者会被自动拉黑
 
+**或命令行配置（替代步骤 2-3，适合批量部署/无浏览器环境）**：
+
+```bash
+fmo-audit-service --configure --emqx http://<EMQX地址> --api-key <key> --api-secret <secret>
+```
+
+自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
+⚠️ Linux systemd 部署（install.sh 安装）时**必须带上服务的 db 路径**，否则配置写进默认数据目录、服务读不到：
+
+```bash
+EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db fmo-audit-service --configure --emqx ... --api-key ... --api-secret ...
+```
+
 ## 反查伪造数据包
 
 1. 收到投诉 → 主题统计 → 选时间范围 → 时间轴 hover 查看每 10 秒谁发得多

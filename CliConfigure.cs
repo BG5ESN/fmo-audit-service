@@ -52,6 +52,10 @@ public static class CliConfigure
         settings.EmqxApiKey = key.Trim();
         settings.EmqxApiSecret = secret.Trim();
         Console.WriteLine($"[2/3] 已保存连接配置 → {dbPath}");
+        // 可用性提醒：systemd 服务（install.sh 安装）的 db 由 unit 的 EMQX_MONITOR_DB 指定（/opt/fmo-fas/fmo-audit-service.db），
+        // 手动跑本命令时环境变量不存在会写进默认数据目录 → 服务读不到
+        Console.WriteLine("  提示: 请确认此路径与服务的 EMQX_MONITOR_DB 一致（install.sh 安装为 /opt/fmo-fas/fmo-audit-service.db），" +
+                          "不一致时服务读不到本配置，需带 EMQX_MONITOR_DB=<服务同路径> 重跑");
 
         // 3) 自动设置主题统计 bridge（主题默认 FMO/RAW，webhook 自动取本机 IP）
         var webhook = $"http://{WebHelpers.GetLanIp()}:{port}/api/ingest";
