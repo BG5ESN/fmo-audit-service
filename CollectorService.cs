@@ -21,6 +21,11 @@ public class CollectorService : BackgroundService
     // clientid → 上一轮累计计数器
     private readonly Dictionary<string, (long SendOct, long RecvOct, long SendMsg, long RecvMsg, long SendPkt, long RecvPkt)> _prev = new();
 
+    // uid 重复观察跟踪：uid → (首次发现时间, 连续观察轮数)。连续 3 轮仍重复才处置，
+    // 避免 EMQX keepalive 窗口（默认 60s）内设备重连的新旧 clientid 短暂并存被误判为克隆。
+    private readonly Dictionary<string, (DateTime FirstSeen, int Count)> _dupUidTrack = new();
+    private const int DupUidConfirmCycles = 3;
+
     private long? _lastMsgTotal;
     private DateTime _lastMsgAt;
     private DateTime _lastCleanupAt = DateTime.MinValue;
@@ -232,48 +237,83 @@ public class CollectorService : BackgroundService
         }
     }
 
-    /// <summary>检测 uid 重复并自动拉黑</summary>
+    /// <summary>检测 uid 重复并自动拉黑（连续 3 轮确认后永久拉黑全组）</summary>
     private async Task DetectAndBanDuplicateUidsAsync(IReadOnlyList<EmqxClientInfo> clients, DateTime now)
     {
-        //按 uid 分组找重复（uid 为空的不参与——匿名客户端无身份可比）
-        var dupUidGroups = clients.Where(c => !string.IsNullOrEmpty(c.Uid)).GroupBy(c => c.Uid!).Where(g => g.Count() > 1).ToList();
-        if (dupUidGroups.Count == 0) return;
+        // 按 uid 分组找重复（uid 为空的不参与——匿名客户端无身份可比）
+        var dupGroups = clients.Where(c => !string.IsNullOrEmpty(c.Uid))
+            .GroupBy(c => c.Uid!)
+            .Where(g => g.Count() > 1)
+            .ToList();
+        var dupUids = dupGroups.Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
 
-        // 取每个重复 uid 下所有客户端的呼号（去重），汇总成待拉黑集合
-        var toBan = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var g in dupUidGroups)
-        {
-            foreach (var c in g)
-            {
-                var who = (c.Callsign ?? c.Username)?.Trim();
-                if (!string.IsNullOrEmpty(who)) toBan.Add(who);
-            }
-        }
-
-        if (toBan.Count == 0) return;
-
-        //查当前 EMQX 活跃黑名单，跳过已拉黑的
+        // 查当前 EMQX 活跃黑名单（读一次，供下面跳过已拉黑）
         var alreadyBanned = _db.QueryActiveBlacklist(now).Select(b => b.Who).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var pending = toBan.Where(w => !alreadyBanned.Contains(w)).ToList();
-        if (pending.Count == 0) return;
 
-        //逐个拉黑 + 踢下线 + 留痕
-        const string reason = "身份控制: UID 重复登录";
-        foreach (var who in pending)
+        // 观测计数 + 筛选出已达确认轮数的组（纯内存操作，锁内完成；await 的拉黑动作放锁外）
+        var confirmed = new List<(string Uid, List<string> Callsigns, List<string> ClientIds, int Rounds)>();
+        lock (_lock)
         {
-            var (err, kicked) = await _emqx.BanAsync(who, reason, null); // null = 永久拉黑
-            if (err != null)
+            // 清理：不再重复的 uid 撤销跟踪——正常重连恢复后无痕
+            foreach (var uid in _dupUidTrack.Keys.Where(k => !dupUids.Contains(k)).ToList())
+                _dupUidTrack.Remove(uid);
+
+            foreach (var g in dupGroups)
             {
-                Console.WriteLine($"[uid-dup] 拉黑 {who} 失败: {err}");
-                continue;
+                var uid = g.Key;
+                var callsigns = g.Select(c => (c.Callsign ?? c.Username)?.Trim())
+                    .Where(w => !string.IsNullOrEmpty(w))
+                    .Select(w => w!)   // Where 已保证非空
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (callsigns.Count == 0) continue;
+
+                // 组内呼号已全部拉黑 → 不再跟踪
+                if (callsigns.All(alreadyBanned.Contains)) { _dupUidTrack.Remove(uid); continue; }
+
+                _dupUidTrack.TryGetValue(uid, out var t);
+                var count = t.Count + 1;
+                var firstSeen = t.Count == 0 ? now : t.FirstSeen;
+                _dupUidTrack[uid] = (firstSeen, count);
+
+                if (count < DupUidConfirmCycles)
+                {
+                    Console.WriteLine($"[uid-dup] uid={uid} 发现重复连接，观察 {count}/{DupUidConfirmCycles} 轮（{string.Join(",", g.Select(c => c.ClientId))}）");
+                    continue;
+                }
+
+                confirmed.Add((uid, callsigns, g.Select(c => c.ClientId).ToList(), count));
             }
 
-            _db.AddBlacklistEvent("ban", "username", who, reason, null, "auto-uid-dup", now);
-            Console.WriteLine($"[uid-dup] 已拉黑 {who}（踢出 {kicked} 个连接）");
+            // 确认处置后清除跟踪，避免后续轮次重复触发
+            foreach (var (uid, _, _, _) in confirmed)
+                _dupUidTrack.Remove(uid);
         }
 
-        //拉黑后即时刷新在线缓存（被踢的客户端立即从 LastClients 消失）
-        _ = CollectNowAsync();
+        if (confirmed.Count == 0) return;
+
+        // 逐个呼号永久拉黑 + 踢下线 + 留痕（证据带 uid/clientid/持续轮数，便于事后审计）
+        const string baseReason = "身份控制: UID 重复登录";
+        foreach (var (uid, callsigns, clientIds, rounds) in confirmed)
+        {
+            var detail = $"uid={uid} 呼号={string.Join("/", callsigns)} clientid={string.Join(",", clientIds)} 持续{rounds}轮";
+            foreach (var who in callsigns)
+            {
+                if (alreadyBanned.Contains(who)) continue;
+                var reason = $"{baseReason}（{detail}）";
+                var (err, kicked) = await _emqx.BanAsync(who, reason, null); // null = 永久拉黑
+                if (err != null)
+                {
+                    Console.WriteLine($"[uid-dup] 拉黑 {who} 失败: {err}");
+                    continue;
+                }
+
+                _db.AddBlacklistEvent("ban", "username", who, reason, null, "auto-uid-dup", now);
+                Console.WriteLine($"[uid-dup] 已永久拉黑 {who}（踢出 {kicked} 个连接，{detail}）");
+            }
+        }
+
+        // 被踢客户端下一轮采集自然从 LastClients 消失，无需额外刷新（原 fire-and-forget 会在定时路径并发启动第二次采集，已删除）
     }
 
     /// <summary>累计计数器差值；重连（归零）时返回 0 并标记</summary>
