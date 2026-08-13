@@ -876,9 +876,11 @@ app.MapPost("/api/update/apply", (UpdateProgressTracker tracker) =>
         }
         else
         {
-            // 替换脚本已就绪（ApplyAsync 内部已报 ready），延迟退出让脚本覆盖二进制
+            // 替换脚本已就绪（ApplyAsync 内部已报 ready），延迟退出让脚本覆盖二进制。
+            // 退出码分平台：Windows 脚本会主动 schtasks /run 重启任务，这里正常退出（0），
+            // 避免 1 分钟后 RestartCount 又拉起一个实例抢端口；Linux 非 0 触发 systemd Restart=on-failure
             await Task.Delay(1500);
-            Environment.Exit(1);
+            Environment.Exit(OperatingSystem.IsWindows() ? 0 : 1);
         }
     });
     return Results.Json(new { ok = true, started = true });

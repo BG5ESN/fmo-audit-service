@@ -192,6 +192,8 @@ public static class UpdateService
                     $"move /y \"{newExe}\" \"{exePath}\" >nul\r\n" +
                     $"rmdir /s /q \"{tempDir}\" >nul 2>nul\r\n" +
                     $"echo FMO Audit Service updated to v{latest}. The scheduled task will restart it.\r\n" +
+                    // 主动重启计划任务（确定性、立即；不依赖 RestartCount 的失败判定）
+                    $"schtasks /run /tn fmo-fas >nul\r\n" +
                     $"del \"%~f0\" >nul 2>nul & exit /b\r\n");
             }
             else
