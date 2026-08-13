@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 
 namespace EmqxMonitor;
 
@@ -57,18 +56,6 @@ public class TopicIngestService : BackgroundService
             TotalIngested = 0;
             LastIngestAt = default;
         }
-    }
-
-    /// <summary>内部 token（持久化在 settings，首次生成）</summary>
-    public string GetToken(Database db)
-    {
-        var t = db.GetSetting("ingest_token");
-        if (string.IsNullOrEmpty(t))
-        {
-            t = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-            db.SetSetting("ingest_token", t);
-        }
-        return t;
     }
 
     /// <summary>接收一条消息事件（webhook 调用），返回是否接受</summary>

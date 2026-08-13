@@ -15,6 +15,7 @@ public class CollectorService : BackgroundService
     private readonly EmqxClient _emqx;
     private readonly Database _db;
     private readonly IHostHealthCollector _health;
+    private readonly ILogger<CollectorService> _log;
 
     private readonly Lock _lock = new();
 
@@ -30,11 +31,12 @@ public class CollectorService : BackgroundService
     private DateTime _lastMsgAt;
     private DateTime _lastCleanupAt = DateTime.MinValue;
 
-    public CollectorService(EmqxClient emqx, Database db, IHostHealthCollector health)
+    public CollectorService(EmqxClient emqx, Database db, IHostHealthCollector health, ILogger<CollectorService> log)
     {
         _emqx = emqx;
         _db = db;
         _health = health;
+        _log = log;
     }
 
     /// <summary>是否已配置 EMQX 连接（由配置页控制）</summary>
@@ -118,6 +120,7 @@ public class CollectorService : BackgroundService
                 LastCollectOk = false;
                 LastError = result.Error;
                 LastStatus = $"采集失败: {result.Error}";
+                _log.LogWarning("EMQX 采集失败: {Error}", result.Error);
                 return;
             }
 
@@ -130,7 +133,7 @@ public class CollectorService : BackgroundService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[uid-dup] 检测异常: {ex.Message}");
+                _log.LogWarning(ex, "uid-dup 检测异常");
             }
 
             lock (_lock)
@@ -278,7 +281,8 @@ public class CollectorService : BackgroundService
 
                 if (count < DupUidConfirmCycles)
                 {
-                    Console.WriteLine($"[uid-dup] uid={uid} 发现重复连接，观察 {count}/{DupUidConfirmCycles} 轮（{string.Join(",", g.Select(c => c.ClientId))}）");
+                    _log.LogInformation("uid-dup uid={Uid} 发现重复连接，观察 {Count}/{Cycles} 轮（{ClientIds}）",
+                        uid, count, DupUidConfirmCycles, string.Join(",", g.Select(c => c.ClientId)));
                     continue;
                 }
 
@@ -304,12 +308,12 @@ public class CollectorService : BackgroundService
                 var (err, kicked) = await _emqx.BanAsync(who, reason, null); // null = 永久拉黑
                 if (err != null)
                 {
-                    Console.WriteLine($"[uid-dup] 拉黑 {who} 失败: {err}");
+                    _log.LogWarning("uid-dup 拉黑 {Who} 失败: {Error}", who, err);
                     continue;
                 }
 
                 _db.AddBlacklistEvent("ban", "username", who, reason, null, "auto-uid-dup", now);
-                Console.WriteLine($"[uid-dup] 已永久拉黑 {who}（踢出 {kicked} 个连接，{detail}）");
+                _log.LogWarning("uid-dup 已永久拉黑 {Who}（踢出 {Kicked} 个连接，{Detail}）", who, kicked, detail);
             }
         }
 

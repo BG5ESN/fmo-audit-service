@@ -18,6 +18,9 @@ public class Database
     /// <summary>数据保留时长（30 天）</summary>
     public static readonly TimeSpan Retention = TimeSpan.FromDays(30);
 
+    /// <summary>schema 版本（PRAGMA user_version）。加字段/索引：版本 +1 并在 MigrateTo 加 ALTER</summary>
+    private const int SchemaVersion = 1;
+
     public Database(string dbPath)
     {
         _connStr = $"Data Source={dbPath}";
@@ -123,10 +126,49 @@ public class Database
             """;
         cmd.ExecuteNonQuery();
 
+        // ---- schema 迁移：user_version 逐版本升级。新表结构放基线 CREATE；
+        //      老库缺列/新索引在 MigrateTo 里 ALTER（加字段 = SchemaVersion+1 + MigrateTo 加分支）----
+        var ver = GetUserVersion(conn);
+        while (ver < SchemaVersion)
+        {
+            ver++;
+            MigrateTo(conn, ver);
+            SetUserVersion(conn, ver);
+        }
+
         // WAL + 性能（单进程读写，NORMAL 足够安全）
         using var pragma = conn.CreateCommand();
         pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
         pragma.ExecuteNonQuery();
+    }
+
+    private static int GetUserVersion(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "PRAGMA user_version";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static void SetUserVersion(SqliteConnection conn, int v)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA user_version = {v}";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>逐版本迁移：case N 执行 v(N-1)→vN 的 ALTER（基线 v1 由 CREATE IF NOT EXISTS 保证，无需操作）</summary>
+    private static void MigrateTo(SqliteConnection conn, int version)
+    {
+        switch (version)
+        {
+            case 1:
+                break;   // 基线
+            // case 2:
+            //     using (var c = conn.CreateCommand()) { c.CommandText = "ALTER TABLE xxx ADD COLUMN yyy ..."; c.ExecuteNonQuery(); }
+            //     break;
+            default:
+                throw new InvalidOperationException($"未知的 schema 版本: {version}");
+        }
     }
 
     private SqliteConnection Open()
