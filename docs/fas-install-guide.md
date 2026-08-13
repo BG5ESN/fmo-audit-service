@@ -62,7 +62,7 @@ Windows 防火墙放行 9527 端口。
 
 | 方式 | 操作 |
 |---|---|
-| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载校验；Linux systemd 自动重启，Windows 计划任务需手动 `Start-ScheduledTask fmo-fas`） |
+| 页面按钮 | 配置页 → 版本与更新 → 检查更新 → 立即更新（自动下载替换；Linux systemd / Windows 计划任务均自动重启） |
 | 命令行 | Linux: `sudo /opt/fmo-fas/fmo-audit-service --update`（systemd 自动重启） |
 
 更新安全性：下载走 HTTPS（传输完整性由 TLS 保障），来源为官方 bg5esn.com。
@@ -149,3 +149,7 @@ location /api/login { limit_req zone=login burst=5; proxy_pass http://127.0.0.1:
 - **1 分钟精度盲区**：客户端在线不足 1 分钟（闪连即断）可能完全不被记录——"短暂闪现"的干扰源在排行榜可能查不到，属预期行为
 - **重连标记**：客户端重连（计数器归零）在明细中标记"重连"，频繁重连也是刷数据特征
 - **EMQX 健康 CPU 指标**：5.x nodes 接口无 CPU 百分比，面板显示的是系统 1 分钟负载（load1）
+
+## 参考
+
+- EMQX REST API 文档（开发/集成时查 API 字段与端点）：https://docs.emqx.com/zh/emqx/latest/admin/api.html

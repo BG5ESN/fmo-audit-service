@@ -6,9 +6,9 @@ namespace EmqxMonitor;
 /// <summary>运行环境模式：决定更新策略（容器内不能自更新）</summary>
 public enum UpdateMode { Self, Docker, Manual }
 
-/// <summary>OTA 更新服务：版本元数据 / 下载校验 / 延迟替换二进制。
+/// <summary>OTA 更新服务：版本元数据 / 下载 / 延迟替换二进制。
 /// 元数据地址与 sas.json 同目录：https://bg5esn.com/share/fmo/fas.json
-/// { "version": "2.0.0", "assets": { "linux-x64": { "url": "...", "sha256": "..." }, ... } }</summary>
+/// { "version": "2.0.0", "assets": { "linux-x64": "https://...", "win-x64": "https://..." } }</summary>
 public static class UpdateService
 {
     /// <summary>元数据地址（可用环境变量 FAS_UPDATE_URL 覆盖——测试/自托管场景）</summary>
@@ -71,7 +71,7 @@ public static class UpdateService
         }
     }
 
-    /// <summary>执行更新：下载最新版 → sha256 校验 → 生成延迟替换脚本 → spawn。返回 (错误, 提示)</summary>
+    /// <summary>执行更新：下载最新版 → 生成延迟替换脚本 → spawn。返回 (错误, 提示)</summary>
     public static async Task<(string? Error, string? Message)> ApplyAsync()
     {
         if (DetectMode() == UpdateMode.Docker)
@@ -84,7 +84,7 @@ public static class UpdateService
 
         try
         {
-            // 1) 按 RID 找下载地址 + sha256
+            // 1) 按 RID 找下载地址
             using var http = NewHttp();
             var json = await http.GetStringAsync(MetaUrl);
             using var doc = JsonDocument.Parse(json);
@@ -151,7 +151,7 @@ public static class UpdateService
                     $"  goto wait\r\n)\r\n" +
                     $"move /y \"{newExe}\" \"{exePath}\"\r\n" +
                     $"rmdir /s /q \"{tempDir}\"\r\n" +
-                    $"echo FMO Audit Service updated to v{latest}. Please restart the service.\r\n" +
+                    $"echo FMO Audit Service updated to v{latest}. The scheduled task will restart it.\r\n" +
                     $"del \"%~f0\"\r\n");
             }
             else
@@ -172,7 +172,7 @@ public static class UpdateService
             else
                 System.Diagnostics.Process.Start("sh", scriptPath);
 
-            return (null, $"v{latest} 已下载并校验，服务即将自动重启（systemd）");
+            return (null, $"v{latest} 已下载，服务即将自动重启");
         }
         catch (Exception ex)
         {

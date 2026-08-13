@@ -846,7 +846,7 @@ app.MapGet("/api/update/check", async () =>
     });
 });
 
-// POST /api/update/apply — 执行更新（下载+sha256 校验+替换，成功后服务自动退出由 systemd 拉起）
+// POST /api/update/apply — 执行更新（下载+替换，成功后以非 0 退出码退出，触发 systemd/计划任务自动重启）
 app.MapPost("/api/update/apply", async (HttpContext ctx) =>
 {
     if (UpdateService.DetectMode() == UpdateMode.Docker)
@@ -856,10 +856,11 @@ app.MapPost("/api/update/apply", async (HttpContext ctx) =>
     if (err != null)
         return Results.Json(new { ok = false, error = err });
 
-    // 先返回响应，再延迟退出进程 → systemd Restart=on-failure 自动拉起新版本
+    // 先返回响应，再延迟退出。退出码必须非 0：systemd Restart=on-failure 与
+    // Windows 计划任务 RestartCount 都只对非 0 退出码触发自动重启（Exit(0) 会让服务停摆）
     await ctx.Response.WriteAsJsonAsync(new { ok = true, message = msg ?? "更新中，服务将自动重启" });
     await ctx.Response.Body.FlushAsync();
-    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(0); });
+    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(1); });
     return Results.Empty;
 });
 
