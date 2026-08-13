@@ -6,6 +6,17 @@ namespace EmqxMonitor;
 /// <summary>运行环境模式：决定更新策略（容器内不能自更新）</summary>
 public enum UpdateMode { Self, Docker, Manual }
 
+/// <summary>更新进度（网页 OTA 轮询用）。Stage: checking/downloading/extracting/preparing/ready</summary>
+public sealed class UpdateProgress
+{
+    public string Stage { get; init; } = "";
+    /// <summary>下载百分比 0-100（仅 downloading 阶段有值；无 Content-Length 时为 null）</summary>
+    public double? Percent { get; init; }
+    public long BytesRead { get; init; }
+    public long? TotalBytes { get; init; }
+    public string? Message { get; init; }
+}
+
 /// <summary>OTA 更新服务：版本元数据 / 下载 / 延迟替换二进制。
 /// 元数据地址与 sas.json 同目录：https://bg5esn.com/share/fmo/fas.json
 /// { "version": "2.0.0", "assets": { "linux-x64": "https://...", "win-x64": "https://..." } }</summary>
@@ -72,11 +83,12 @@ public static class UpdateService
     }
 
     /// <summary>执行更新：下载最新版 → 生成延迟替换脚本 → spawn。返回 (错误, 提示)</summary>
-    public static async Task<(string? Error, string? Message, bool Replaced)> ApplyAsync()
+    public static async Task<(string? Error, string? Message, bool Replaced)> ApplyAsync(Action<UpdateProgress>? onProgress = null)
     {
         if (DetectMode() == UpdateMode.Docker)
             return ("容器内不支持自更新", "Docker 部署请使用: docker pull 新镜像 && docker compose up -d", false);
 
+        onProgress?.Invoke(new UpdateProgress { Stage = "checking" });
         var (current, latest, hasUpdate, err) = await CheckAsync();
         if (err != null) return (err, null, false);
         if (latest == null) return ("元数据无最新版本", null, false);
@@ -88,7 +100,17 @@ public static class UpdateService
             using var http = NewHttp();
             var json = await http.GetStringAsync(MetaUrl);
             using var doc = JsonDocument.Parse(json);
-            var rid = RuntimeInformation.RuntimeIdentifier ?? "";
+            var rid = RuntimeInformation.RuntimeIdentifier;
+            if (string.IsNullOrEmpty(rid))
+            {
+                // 框架依赖模式（dotnet run / 非 self-contained）下 RuntimeIdentifier 为 null，按 OS/架构推断；
+                // 生产单文件发布时 RuntimeIdentifier 有值，不会走到这里
+                rid = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win-x64"
+                    : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                        ? (RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "osx-arm64" : "osx-x64")
+                        : (RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "linux-arm64"
+                            : RuntimeInformation.OSArchitecture == Architecture.Arm ? "linux-arm" : "linux-x64");
+            }
             if (!doc.RootElement.TryGetProperty("assets", out var assets)
                 || !assets.TryGetProperty(rid, out var asset))
                 return ($"元数据中没有当前平台 {rid} 的下载地址", null, false);
@@ -104,17 +126,34 @@ public static class UpdateService
                             || url.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase);
             var ext = url.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".tar.gz";
             var archivePath = Path.Combine(tempDir, $"update{ext}");
+            onProgress?.Invoke(new UpdateProgress { Stage = "downloading", Percent = 0, BytesRead = 0 });
             using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
             {
                 resp.EnsureSuccessStatusCode();
                 await using var src = await resp.Content.ReadAsStreamAsync();
                 await using var dst = File.Create(archivePath);
-                await src.CopyToAsync(dst);
+                var total = resp.Content.Headers.ContentLength;
+                var buffer = new byte[81920];
+                long read = 0;
+                int n;
+                while ((n = await src.ReadAsync(buffer)) > 0)
+                {
+                    await dst.WriteAsync(buffer.AsMemory(0, n));
+                    read += n;
+                    onProgress?.Invoke(new UpdateProgress
+                    {
+                        Stage = "downloading",
+                        Percent = total.HasValue ? (double)read / total.Value * 100 : null,
+                        BytesRead = read,
+                        TotalBytes = total,
+                    });
+                }
             }
 
             // 3) 下载完成（传输完整性由 HTTPS/TLS 保障，官方源可信，无需额外哈希）
 
             // 4) 解压（归档）或直接使用（裸二进制产物）
+            onProgress?.Invoke(new UpdateProgress { Stage = "extracting" });
             string newExe;
             if (isArchive)
             {
@@ -134,6 +173,7 @@ public static class UpdateService
             }
 
             // 6) 延迟替换脚本：等本进程退出 → 覆盖自身 → 清理
+            onProgress?.Invoke(new UpdateProgress { Stage = "preparing" });
             var exePath = Environment.ProcessPath ?? "";
             if (string.IsNullOrEmpty(exePath)) return ("无法确定当前可执行文件路径", null, false);
             var scriptPath = Path.Combine(Path.GetTempPath(),
@@ -172,6 +212,7 @@ public static class UpdateService
             else
                 System.Diagnostics.Process.Start("sh", scriptPath);
 
+            onProgress?.Invoke(new UpdateProgress { Stage = "ready", Message = $"v{latest} 已就绪，即将重启" });
             return (null, $"v{latest} 已下载", true);
         }
         catch (Exception ex)

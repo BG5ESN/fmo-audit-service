@@ -85,6 +85,7 @@ builder.Services.AddSingleton(collector);
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CollectorService>());
 builder.Services.AddSingleton(topicIngest);
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TopicIngestService>());
+builder.Services.AddSingleton<UpdateProgressTracker>();
 
 // 反代场景（HTTPS 反代 → 内部 HTTP）：信任 X-Forwarded-Proto，让 Secure Cookie 在 HTTPS 下生效
 // 伪造 https 头只会影响自身 Cookie 的 Secure 标记，无实际危害
@@ -853,26 +854,49 @@ app.MapGet("/api/update/check", async () =>
     });
 });
 
-// POST /api/update/apply — 执行更新（下载+替换，成功后以非 0 退出码退出，触发 systemd/计划任务自动重启）
-app.MapPost("/api/update/apply", async (HttpContext ctx) =>
+// POST /api/update/apply — 启动更新（立即返回，进度由 /api/update/progress 轮询；成功后以非 0 退出码退出触发自动重启）
+app.MapPost("/api/update/apply", (UpdateProgressTracker tracker) =>
 {
     if (UpdateService.DetectMode() == UpdateMode.Docker)
         return Results.Json(new { ok = false, error = "容器内不支持自更新，请使用 docker pull 更新镜像" });
 
-    var (err, msg, replaced) = await UpdateService.ApplyAsync();
-    if (err != null)
-        return Results.Json(new { ok = false, error = err });
+    // 后台执行下载+替换，进度写入 tracker 供前端轮询；退出码非 0 触发 systemd/计划任务自动重启
+    tracker.Reset();
+    _ = Task.Run(async () =>
+    {
+        var (err, msg, replaced) = await UpdateService.ApplyAsync(p => tracker.Report(p));
+        if (err != null)
+        {
+            tracker.Report(new UpdateProgress { Stage = "error", Message = err });
+        }
+        else if (!replaced)
+        {
+            // 已是最新版本 → 不退出
+            tracker.Report(new UpdateProgress { Stage = "done", Message = msg });
+        }
+        else
+        {
+            // 替换脚本已就绪（ApplyAsync 内部已报 ready），延迟退出让脚本覆盖二进制
+            await Task.Delay(1500);
+            Environment.Exit(1);
+        }
+    });
+    return Results.Json(new { ok = true, started = true });
+});
 
-    // 已是最新版本（无更新）→ 不退出、不重启，直接返回提示
-    if (!replaced)
-        return Results.Json(new { ok = true, message = msg });
-
-    // 先返回响应，再延迟退出。退出码必须非 0：systemd Restart=on-failure 与
-    // Windows 计划任务 RestartCount 都只对非 0 退出码触发自动重启（Exit(0) 会让服务停摆）
-    await ctx.Response.WriteAsJsonAsync(new { ok = true, message = $"{msg}，服务将自动重启" });
-    await ctx.Response.Body.FlushAsync();
-    _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(1); });
-    return Results.Empty;
+// GET /api/update/progress — 查询更新进度（网页 300ms 轮询）
+app.MapGet("/api/update/progress", (UpdateProgressTracker tracker) =>
+{
+    var p = tracker.Snapshot();
+    return Results.Json(new
+    {
+        ok = true,
+        stage = p.Stage,
+        percent = p.Percent,
+        bytes_read = p.BytesRead,
+        total_bytes = p.TotalBytes,
+        message = p.Message,
+    });
 });
 
 // ---- 数据管理 ----
@@ -932,6 +956,16 @@ static string Csv(string v)
 }
 
 app.Run();
+
+/// <summary>更新进度追踪器（网页 OTA 轮询读当前状态）</summary>
+public sealed class UpdateProgressTracker
+{
+    private readonly object _lock = new();
+    private UpdateProgress _current = new() { Stage = "idle" };
+    public void Reset() { lock (_lock) _current = new() { Stage = "idle" }; }
+    public void Report(UpdateProgress p) { lock (_lock) _current = p; }
+    public UpdateProgress Snapshot() { lock (_lock) return _current; }
+}
 
 record SetupRequest(string? Username, string? Password);
 record LoginRequest(string? Username, string? Password);
