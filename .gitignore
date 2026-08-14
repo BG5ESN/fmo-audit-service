@@ -9,6 +9,7 @@ fas.json
 *.db
 *.db-shm
 *.db-wal
+.env
 
 # IDE
 .vs/

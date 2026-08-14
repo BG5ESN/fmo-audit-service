@@ -12,7 +12,13 @@ if (args.Contains("--check") || args.Contains("--update"))
     if (args.Contains("--update"))
     {
         var (err, msg, replaced) = await UpdateService.ApplyAsync();
-        if (err != null) { Console.WriteLine($"更新失败: {err}"); Environment.Exit(1); return; }
+        if (err != null)
+        {
+            Console.WriteLine($"更新失败: {err}");
+            if (msg != null) Console.WriteLine(msg);
+            Environment.Exit(1);
+            return;
+        }
         Console.WriteLine(msg);
         if (replaced)
         {
