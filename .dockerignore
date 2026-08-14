@@ -22,7 +22,6 @@ dist
 *.db-shm
 *.db-wal
 
-.env
 docs
 script
 fmo-audit-service.Tests

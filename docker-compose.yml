@@ -1,18 +1,12 @@
 services:
   fas:
-    image: ghcr.io/bi9bbl/fmo-audit-service:latest
+    image: ghcr.io/bg5esn/fmo-audit-service:latest
     container_name: fmo-audit
     restart: unless-stopped
 
     environment:
       EMQX_MONITOR_PORT: "9527"
       EMQX_MONITOR_DB: /data/fmo-audit-service.db
-      EMQX_MONITOR_TRUST_PROXY: ${EMQX_MONITOR_TRUST_PROXY:-0}
-
-      # Consumed only by `fmo-audit-service --configure` (docker exec), not baked into the image.
-      EMQX_URL: ${EMQX_URL:-}
-      EMQX_API_KEY: ${EMQX_API_KEY:-}
-      EMQX_API_SECRET: ${EMQX_API_SECRET:-}
 
     ports:
       - "9527:9527"

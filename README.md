@@ -44,22 +44,23 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 
 ### Docker Compose
 
-镜像面向已有的独立 EMQX 服务，不会随 Compose 启动 EMQX；`fas-data` 卷持久化 SQLite 数据库、FAS 配置、管理员账户、审计记录、黑名单和 EMQX 凭据。
+镜像面向已有的独立 EMQX 服务，不会随 Compose 启动 EMQX；`fas-data` 卷持久化 SQLite 数据库、FAS 配置、管理员账户、审计记录、黑名单和 EMQX 凭据。开箱即用，无需预先传参：
 
 ```bash
-cp .env.example .env
-# 编辑 .env：按需设置 EMQX_MONITOR_TRUST_PROXY，或填写 EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET 供后续 --configure 使用
 docker compose up -d
 ```
 
-访问 `http://<服务器IP>:9527` 完成管理员账号初始化和 EMQX 配置；也可以用 `.env` 中的变量在运行中的容器内配置：
+访问 `http://<服务器IP>:9527`，与非 Docker 部署一致：设置管理员账号（首次强制）→ 配置页填入 EMQX 地址 + API Key / Secret → 按需启用主题统计与身份控制。
+
+如需命令行配置（等价于 `--configure`），带上环境变量执行：
 
 ```bash
-docker exec -it fmo-audit dotnet fmo-audit-service.dll --configure
+docker exec -e EMQX_URL=<地址> -e EMQX_API_KEY=<key> -e EMQX_API_SECRET=<secret> \
+  fmo-audit dotnet fmo-audit-service.dll --configure
 docker compose restart fas
 ```
 
-反代场景需要设置 `EMQX_MONITOR_TRUST_PROXY=1`（仅用于可信反向代理）。
+反代场景需要设置 `EMQX_MONITOR_TRUST_PROXY=1`（仅用于可信反向代理），可在 `docker-compose.yml` 的 `environment` 中添加。
 
 卷 `fas-data` 不要删除，除非要完全重置 FAS；删除后管理员账号、EMQX 配置、审计与黑名单数据都会丢失。
 
