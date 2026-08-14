@@ -170,7 +170,7 @@ app.Use(async (ctx, next) =>
             await ctx.Response.WriteAsJsonAsync(new { ok = false, error = "系统未初始化，请先设置管理员账号" });
             return;
         }
-        ctx.Response.Redirect("/setup.html");
+        ctx.Response.Redirect("setup.html");
         return;
     }
 
@@ -187,14 +187,14 @@ app.Use(async (ctx, next) =>
             await ctx.Response.WriteAsJsonAsync(new { ok = false, error = "未登录" });
             return;
         }
-        ctx.Response.Redirect("/login.html");
+        ctx.Response.Redirect("login.html");
         return;
     }
 
     // 已登录访问登录/设置页 → 回主页
     if (path == "/login.html" || path == "/setup.html")
     {
-        ctx.Response.Redirect("/");
+        ctx.Response.Redirect("index.html");
         return;
     }
     await next();

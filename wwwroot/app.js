@@ -3,13 +3,13 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const page = location.pathname;
+  const page = location.pathname.split('/').pop() || 'index.html';
 
   // ---------------- 通用 ----------------
 
   async function api(path, opts) {
     const r = await fetch(path, opts);
-    if (r.status === 401) { location.href = '/login.html'; throw new Error('未登录'); }
+    if (r.status === 401) { location.href = 'login.html'; throw new Error('未登录'); }
     return r.json();
   }
 
@@ -30,7 +30,7 @@
 
   async function refreshStatus() {
     try {
-      const d = await api('/api/status');
+      const d = await api('api/status');
       const el = $('collect-status');
       if (!el) return;
       if (d.collecting) {
@@ -46,9 +46,9 @@
   // 首次使用引导：未完成（未配置 EMQX）时强制跳配置页
   async function ensureWizard() {
     try {
-      const d = await api('/api/status');
+      const d = await api('api/status');
       if (!d.wizard_done && !d.configured) {
-        location.href = '/settings.html';
+        location.href = 'settings.html';
         return false;
       }
       return true;
@@ -56,8 +56,8 @@
   }
 
   $('logout').addEventListener('click', async () => {
-    await fetch('/api/logout', { method: 'POST' });
-    location.href = '/login.html';
+    await fetch('api/logout', { method: 'POST' });
+    location.href = 'login.html';
   });
 
   // ---------------- 黑名单（排行榜 / 主题 / 黑名单页共用） ----------------
@@ -69,7 +69,7 @@
     const now = Date.now();
     if (!force && blMap && now - blMapAt < 60000) return blMap;
     try {
-      const d = await api('/api/blacklist/active');
+      const d = await api('api/blacklist/active');
       const map = {};
       (d.local || []).forEach(x => { map[x.who] = { who: x.who, reason: x.reason || '', until: x.until, operator: x.operator, createdAt: x.createdAt, src: 'local' }; });
       (d.emqx_only || []).forEach(x => { if (!map[x.who]) map[x.who] = { who: x.who, reason: x.reason || '', until: x.until, operator: '', createdAt: '', src: 'emqx' }; });
@@ -158,7 +158,7 @@
       msg2.className = 'form-msg';
       msg2.textContent = '正在拉黑…';
       try {
-        const d = await api('/api/blacklist/ban', {
+        const d = await api('api/blacklist/ban', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ who: who2, reason, until })
         });
@@ -179,7 +179,7 @@
   async function doUnban(who) {
     if (!confirm(`确认解封 ${who}？解封后该呼号可重新连接 EMQX。`)) return;
     try {
-      const d = await api('/api/blacklist/unban', {
+      const d = await api('api/blacklist/unban', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ who })
       });
@@ -193,7 +193,7 @@
 
   // ---------------- 排行榜页 ----------------
 
-  if (page === '/' || page === '/index.html') { initLeaderboard(); }
+  if (page === 'index.html') { initLeaderboard(); }
 
   function initLeaderboard() {
     let range = 'custom', order = 'oct';
@@ -245,7 +245,7 @@
     $('export').onclick = () => {
       const f = $('from').value, t = $('to').value;
       if (!f || !t) return;
-      location.href = `/api/export.csv?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}`;
+      location.href = `api/export.csv?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}`;
     };
 
     async function query() {
@@ -254,7 +254,7 @@
       $('query').disabled = true;
       const started = Date.now();
       try {
-        const d = await api(`/api/leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
+        const d = await api(`api/leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
         if (!d.ok) { alert(d.error || '查询失败'); return; }
         await getBlacklistActive();
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
@@ -294,7 +294,7 @@
       }
       if (openRow) openRow.remove();
       const f = $('from').value, t = $('to').value;
-      const d = await api(`/api/leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      const d = await api(`api/leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       const detail = document.createElement('tr');
       detail.className = 'detail-row';
       detail.innerHTML = `<td colspan="8"><div class="detail-box">
@@ -338,7 +338,7 @@
 
   // ---------------- 健康页 ----------------
 
-  if (page === '/health.html') { initHealth(); }
+  if (page === 'health.html') { initHealth(); }
 
   function initHealth() {
     let range = '7d';
@@ -365,7 +365,7 @@
 
     async function query() {
       const f = $('from').value, t = $('to').value;
-      const d = await api(`/api/health?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      const d = await api(`api/health?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       if (!d.ok) { alert(d.error || '查询失败'); return; }
       drawHealth(d.rows);
     }
@@ -469,7 +469,7 @@
 
   // ---------------- 主题统计页 ----------------
 
-  if (page === '/topics.html') { initTopics(); }
+  if (page === 'topics.html') { initTopics(); }
 
   function initTopics() {
     const pad = n => String(n).padStart(2, '0');
@@ -488,7 +488,7 @@
     // 读取主题配置状态
     (async () => {
       try {
-        const d = await api('/api/topic-config');
+        const d = await api('api/topic-config');
         topic = d.topic;
         $('topic-name').textContent = d.topic + ' /#';
         const st = $('ingest-status');
@@ -536,7 +536,7 @@
     $('export').onclick = () => {
       const f = $('from').value, t = $('to').value;
       if (!f || !t) return;
-      location.href = `/api/topic-export.csv?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}`;
+      location.href = `api/topic-export.csv?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}`;
     };
 
     async function query() {
@@ -544,7 +544,7 @@
       if (!f || !t) { alert('请选择起止时间'); return; }
       $('query').disabled = true;
       try {
-        const d = await api(`/api/topic-leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
+        const d = await api(`api/topic-leaderboard?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&order=${order}&limit=200`);
         if (!d.ok) { alert(d.error || '查询失败'); return; }
         await getBlacklistActive();
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
@@ -561,7 +561,7 @@
       const f = $('from').value, t = $('to').value;
       if (!f || !t) return;
       try {
-        const d = await api(`/api/topic-timeline?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&bucket=${bucket}`);
+        const d = await api(`api/topic-timeline?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&bucket=${bucket}`);
         if (!d.ok) return;
         drawTimeline(d.rows, d.bucket, !!auto);
       } catch (e) { /* 401 */ }
@@ -771,7 +771,7 @@
       if (openRow && openRow.parentNode === tr.nextSibling) { openRow.remove(); openRow = null; return; }
       if (openRow) openRow.remove();
       const f = $('from').value, t = $('to').value;
-      const d = await api(`/api/topic-leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      const d = await api(`api/topic-leaderboard/${encodeURIComponent(name)}?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       const detail = document.createElement('tr');
       detail.className = 'detail-row';
       detail.innerHTML = `<td colspan="6"><div class="detail-box">
@@ -808,7 +808,7 @@
       if (document.hidden) return;
       if (!$('auto-refresh') || !$('auto-refresh').checked) return;
       loadTimeline(true);
-      api('/api/topic-config').then(d => {
+      api('api/topic-config').then(d => {
         if (d && d.enabled) {
           const st = $('ingest-status');
           st.textContent = `已启用（已接收 ${fmtNum(d.total_ingested)} 条，最近 ${d.last_ingest_at || '-'}）`;
@@ -819,7 +819,7 @@
 
   // ---------------- 在线列表页 ----------------
 
-  if (page === '/online.html') { initOnline(); }
+  if (page === 'online.html') { initOnline(); }
 
   function initOnline() {
     refreshStatus();
@@ -847,7 +847,7 @@
     }
 
     async function load() {
-      const d = await api('/api/online');
+      const d = await api('api/online');
       const rows = d.rows || [];
       const sum = $('online-summary');
       const upd = $('online-updated');
@@ -897,7 +897,7 @@
 
   // ---------------- 身份审计页 ----------------
 
-  if (page === '/audit.html') { initAudit(); }
+  if (page === 'audit.html') { initAudit(); }
 
   function initAudit() {
     const pad = n => String(n).padStart(2, '0');
@@ -912,7 +912,7 @@
     // 身份控制开关状态
     (async () => {
       try {
-        const d = await api('/api/identity-control');
+        const d = await api('api/identity-control');
         const el = $('ic-status');
         if (d.enabled) { el.className = 'status-ok'; el.textContent = '身份控制已启用（伪造即自动拉黑）'; }
         else { el.className = 'status-err'; el.textContent = '身份控制已关闭（仅记录提醒，不自动拉黑）'; }
@@ -950,7 +950,7 @@
       $('query').disabled = true;
       const started = Date.now();
       try {
-        const d = await api(`/api/audit-packets?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}${verdict ? `&verdict=${verdict}` : ''}&limit=300`);
+        const d = await api(`api/audit-packets?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}${verdict ? `&verdict=${verdict}` : ''}&limit=300`);
         if (!d.ok) { alert(d.error || '查询失败'); return; }
         $('range-desc').textContent = `${d.from.replace('T', ' ')} 至 ${d.to.replace('T', ' ')}`;
         const c = d.counts || {};
@@ -996,7 +996,7 @@
 
   // ---------------- 黑名单页 ----------------
 
-  if (page === '/blacklist.html') { initBlacklist(); }
+  if (page === 'blacklist.html') { initBlacklist(); }
 
   function initBlacklist() {
     refreshStatus();
@@ -1004,7 +1004,7 @@
     refreshAfterBl = load;
 
     async function load() {
-      const d = await api('/api/blacklist/active');
+      const d = await api('api/blacklist/active');
       const st = $('bl-status');
       if (!d.emqx_reachable) {
         st.className = 'status-err';
@@ -1033,7 +1033,7 @@
       bindBanActions(tbody);   // 复用解封事件
 
       // 操作历史
-      const h = await api('/api/blacklist/history');
+      const h = await api('api/blacklist/history');
       const htbody = $('history-rows');
       htbody.innerHTML = '';
       $('history-empty').classList.toggle('hidden', h.rows.length > 0);
@@ -1059,7 +1059,7 @@
 
   // ---------------- 说明页 ----------------
 
-  if (page === '/help.html') {
+  if (page === 'help.html') {
     ensureWizard();
     refreshStatus();
     setInterval(refreshStatus, 30000);
@@ -1067,7 +1067,7 @@
 
   // ---------------- 配置页 ----------------
 
-  if (page === '/settings.html') { initSettings(); }
+  if (page === 'settings.html') { initSettings(); }
 
   function initSettings() {
     refreshStatus();
@@ -1076,7 +1076,7 @@
     // ---- 身份控制开关 ----
     (async () => {
       try {
-        const d = await api('/api/identity-control');
+        const d = await api('api/identity-control');
         const el = $('ic-status');
         if (d.enabled) { el.className = 'status-ok'; el.textContent = '已启用（伪造即自动拉黑）'; }
         else { el.className = 'status-err'; el.textContent = '已关闭（仅记录提醒）'; }
@@ -1087,7 +1087,7 @@
       msg.className = 'form-msg';
       msg.textContent = '保存中…';
       try {
-        const d = await api('/api/identity-control', {
+        const d = await api('api/identity-control', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled })
         });
@@ -1110,7 +1110,7 @@
       msg.className = 'form-msg';
       msg.textContent = '检查中…';
       try {
-        const d = await api('/api/update/check');
+        const d = await api('api/update/check');
         $('up-current').textContent = d.current;
         const lr = $('up-latest-row'), mr = $('up-mode-row'), dh = $('up-docker-hint');
         lr.style.display = '';
@@ -1163,13 +1163,13 @@
       };
 
       try {
-        const d = await api('/api/update/apply', { method: 'POST' });
+        const d = await api('api/update/apply', { method: 'POST' });
         if (!d.ok) { finish('err', d.error || '启动更新失败'); return; }
       } catch (e) { finish('err', '启动更新失败（服务不可用）'); return; }
 
       timer = setInterval(async () => {
         try {
-          const p = await api('/api/update/progress');
+          const p = await api('api/update/progress');
           if (p.stage === 'checking') { setStage('checking', '正在检查更新…'); setBar(0); progText.textContent = ''; }
           else if (p.stage === 'downloading') {
             setStage('downloading', '正在下载新版本…');
@@ -1194,7 +1194,7 @@
           const reconnect = async () => {
             if (Date.now() > deadline) { stageText.textContent = '重启超时，请手动刷新页面'; return; }
             try {
-              await fetch('/api/update/check', { credentials: 'same-origin' });
+              await fetch('api/update/check', { credentials: 'same-origin' });
               location.reload();
             } catch { setTimeout(reconnect, 2000); }
           };
@@ -1206,7 +1206,7 @@
 
     (async () => {
       try {
-        const d = await api('/api/config');
+        const d = await api('api/config');
         $('emqx-url').value = d.emqx_url || '';
         $('run-port').textContent = d.listen_port;
         $('run-retention').textContent = d.data_retention_days + ' 天';
@@ -1224,14 +1224,14 @@
       msg.textContent = '正在测试连接…';
       $('save-config').disabled = true;
       try {
-        const d = await api('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emqxUrl: url, apiKey: key, apiSecret: secret }) });
+        const d = await api('api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emqxUrl: url, apiKey: key, apiSecret: secret }) });
         if (d.ok) { msg.className = 'form-msg ok'; msg.textContent = '连接成功，开始采集（1 分钟后出数据）'; refreshStatus(); }
         else msg.textContent = d.error || '连接失败';
       } finally { $('save-config').disabled = false; }
     };
 
     $('disconnect').onclick = async () => {
-      const d = await api('/api/config/disconnect', { method: 'POST' });
+      const d = await api('api/config/disconnect', { method: 'POST' });
       if (d.ok) { $('config-msg').className = 'form-msg ok'; $('config-msg').textContent = '已断开监控'; refreshStatus(); }
     };
 
@@ -1240,7 +1240,7 @@
       const msg = $('pw-msg');
       msg.className = 'form-msg err';
       if (!oldPw || newPw.length < 8) { msg.textContent = '请填写旧密码，新密码至少 8 个字符'; return; }
-      const d = await api('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) });
+      const d = await api('api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) });
       if (d.ok) { msg.className = 'form-msg ok'; msg.textContent = '密码已修改'; $('old-pw').value = ''; $('new-pw').value = ''; }
       else msg.textContent = d.error || '修改失败';
     };
@@ -1276,7 +1276,7 @@
     };
     (async () => {
       try {
-        const d = await api('/api/topic-config');
+        const d = await api('api/topic-config');
         $('topic-name').value = d.topic;
         $('topic-webhook-url').value = d.webhook_url || d.ingest_url;
         $('topic-webhook').textContent = d.webhook_url || d.ingest_url;
@@ -1318,7 +1318,7 @@
       msg.className = 'form-msg err';
       // 智能网段提示：webhook 是内网 IP 而 EMQX 是公网地址 → 异地节点可能无法上报
       try {
-        const cfg = await api('/api/config');
+        const cfg = await api('api/config');
         const emqxHost = (cfg.emqx_url || '').replace(/^https?:\/\//, '').split(/[/:]/)[0];
         const whHost = (webhookUrl || '').replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
         const isPriv = h => {
@@ -1335,7 +1335,7 @@
       msg.textContent = '正在配置 EMQX 规则引擎…';
       $('topic-enable').disabled = true;
       try {
-        const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
+        const d = await api('api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true, topic, webhookUrl }) });
         if (d.ok) {
           // 立即启用（不阻塞）；配置报告展示异常
           const hasIssue = !!(d.pending || d.failed || (d.status && !d.status.ok));
@@ -1363,7 +1363,7 @@
     $('topic-disable').onclick = async () => {
       const msg = $('topic-msg');
       msg.className = 'form-msg err';
-      const d = await api('/api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) });
+      const d = await api('api/topic-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) });
       if (d.ok) {
         msg.className = 'form-msg ok';
         msg.textContent = '已停用，规则引擎已从 EMQX 移除';
@@ -1381,7 +1381,7 @@
       res.className = 'form-msg';
       res.textContent = '正在测试…';
       try {
-        const d = await api('/api/topic-test');
+        const d = await api('api/topic-test');
         if (!d.ok) { res.className = 'form-msg err'; res.textContent = d.error || '测试失败'; return; }
         const s = d.status;
         const conn = s.connector;
@@ -1398,7 +1398,7 @@
         res.style.display = '';
         // 测试通过后刷新状态显示（清除待确认）
         if (s.ok) {
-          const c = await api('/api/topic-config');
+          const c = await api('api/topic-config');
           showTopicReport(c);
           if (c.enabled) { $('topic-status').textContent = '已启用'; $('topic-status').style.color = '#2e7d32'; }
         }
@@ -1409,7 +1409,7 @@
     // ---- 首次引导横幅 ----
     (async () => {
       try {
-        const d = await api('/api/status');
+        const d = await api('api/status');
         if (!d.wizard_done && !d.configured) {
           $('wizard-banner').classList.remove('hidden');
         }
@@ -1423,7 +1423,7 @@
       msg.textContent = '正在检测…';
       $('check-run').disabled = true;
       try {
-        const d = await api('/api/check');
+        const d = await api('api/check');
         if (!d.ok) { msg.textContent = d.error || '检测失败'; box.innerHTML = ''; return; }
         msg.className = 'form-msg ok';
         msg.textContent = `检测完成：EMQX ${d.version}`;
@@ -1438,7 +1438,7 @@
     // ---- 数据管理 ----
     async function loadStats() {
       try {
-        const d = await api('/api/admin/stats');
+        const d = await api('api/admin/stats');
         $('stat-minutes').textContent = fmtNum(d.minute_stats);
         $('stat-topics').textContent = fmtNum(d.topic_stats);
         $('stat-health').textContent = fmtNum(d.health_snapshots);
@@ -1453,7 +1453,7 @@
       if (!confirm('再次确认：清空后 30 天内的历史数据将全部丢失。')) return;
       msg.textContent = '正在清空…';
       try {
-        const d = await api('/api/admin/clear-data', { method: 'POST' });
+        const d = await api('api/admin/clear-data', { method: 'POST' });
         if (d.ok) {
           msg.className = 'form-msg ok';
           msg.textContent = '已清空（呼号增量 ' + d.cleared.minute_stats + ' / 主题 ' + d.cleared.topic_stats + ' / 健康 ' + d.cleared.health_snapshots + ' 行），从当前时刻重新统计';
@@ -1471,10 +1471,10 @@
       if (!confirm('最后一次确认：所有历史数据（30 天）将永久丢失。')) return;
       msg.textContent = '正在重置…';
       try {
-        const d = await api('/api/admin/reset', { method: 'POST' });
+        const d = await api('api/admin/reset', { method: 'POST' });
         if (d.ok) {
           msg.textContent = '重置完成，正在跳转首次设置…';
-          setTimeout(() => { location.href = '/setup.html'; }, 800);
+          setTimeout(() => { location.href = 'setup.html'; }, 800);
         } else msg.textContent = d.error || '重置失败';
       } catch (e) { msg.textContent = '重置失败'; }
     };
