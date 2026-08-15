@@ -94,6 +94,17 @@ fmo-audit-service --configure
 自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
 ⚠️ Linux systemd 部署必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`（服务 unit 的 db 路径），否则配置写进默认数据目录、服务读不到。
 
+webhook 地址默认自动探测本机出口 IP，Docker/容器场景该 IP 不稳定，应显式指定 `EMQX_MONITOR_WEBHOOK_URL`，例如：
+
+```bash
+EMQX_URL=http://emqx:18083 \
+EMQX_API_KEY=<key> \
+EMQX_API_SECRET=<secret> \
+EMQX_MONITOR_DB=/data/fmo-audit-service.db \
+EMQX_MONITOR_WEBHOOK_URL=http://fas:9527/api/ingest \
+fmo-audit-service --configure
+```
+
 ## 反查伪造数据包
 
 1. 收到投诉 → 主题统计 → 选时间范围 → 时间轴 hover 查看每 10 秒谁发得多
@@ -118,6 +129,7 @@ fmo-audit-service --configure
 | `EMQX_URL` | - | 命令行配置（--configure）用：EMQX 地址 |
 | `EMQX_API_KEY` | - | 命令行配置（--configure）用：API 密钥 Key |
 | `EMQX_API_SECRET` | - | 命令行配置（--configure）用：API 密钥 Secret |
+| `EMQX_MONITOR_WEBHOOK_URL` | - | 命令行配置（--configure）用：主题统计 bridge 的 webhook 地址，显式指定时直接使用；不设置时保持原行为（自动探测本机出口 IP 拼 `http://<IP>:<PORT>/api/ingest`）。Docker Compose 等容器动态 IP 场景应显式设置，例如 `http://fas:9527/api/ingest` |
 
 ## 数据与备份
 

@@ -24,6 +24,14 @@ public static class WebHelpers
         return v.Contains(',') || v.Contains('"') ? $"\"{v.Replace("\"", "\"\"")}\"" : v;
     }
 
+    /// <summary>--configure 的主题统计 webhook 地址：显式指定（如 Docker Compose 场景）时直接使用，
+    /// 否则回退自动探测本机出口 IP——供 CliConfigure 调用，抽成纯函数便于单测</summary>
+    public static string ResolveWebhookUrl(string? overrideUrl, int port)
+    {
+        var trimmed = overrideUrl?.Trim();
+        return !string.IsNullOrEmpty(trimmed) ? trimmed.TrimEnd('/') : $"http://{GetLanIp()}:{port}/api/ingest";
+    }
+
     /// <summary>本机出口 IP（UDP 连 8.8.8.8 触发路由选择，不发包；失败回退 127.0.0.1）——CLI --configure 的 webhook 地址用</summary>
     public static string GetLanIp()
     {
