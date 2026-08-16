@@ -55,8 +55,12 @@ public static class CliConfigure
         Console.WriteLine("  提示: 请确认此路径与服务的 EMQX_MONITOR_DB 一致（install.sh 安装为 /opt/fmo-fas/fmo-audit-service.db），" +
                           "不一致时服务读不到本配置，需带 EMQX_MONITOR_DB=<服务同路径> 重跑");
 
-        // 3) 自动设置主题统计 bridge（主题默认 FMO/RAW，webhook 自动取本机 IP）
-        var webhook = $"http://{WebHelpers.GetLanIp()}:{port}/api/ingest";
+        // 3) 自动设置主题统计 bridge（主题默认 FMO/RAW）
+        // webhook 地址：EMQX_MONITOR_WEBHOOK_URL 显式指定时直接使用（Docker Compose 等场景，容器动态 IP 不可用），
+        // 否则保持原行为，通过 GetLanIp() 自动探测本机出口 IP
+        var webhookOverride = Environment.GetEnvironmentVariable("EMQX_MONITOR_WEBHOOK_URL");
+        var webhook = WebHelpers.ResolveWebhookUrl(webhookOverride, port);
+        Console.WriteLine($"  webhook 来源: {(!string.IsNullOrWhiteSpace(webhookOverride) ? "EMQX_MONITOR_WEBHOOK_URL" : "自动探测本机 IP")} → {webhook}");
         var token = settings.IngestToken;
         const string topic = "FMO/RAW";
         Console.WriteLine($"[3/3] 设置主题统计 bridge: webhook={webhook} topic={topic}");

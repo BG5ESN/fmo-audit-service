@@ -113,4 +113,34 @@ public class WebHelpersTests
     {
         Assert.Equal("BG5ESN", WebHelpers.Csv("BG5ESN"));
     }
+
+    [Fact]
+    public void ResolveWebhookUrl_显式指定时直接使用()
+    {
+        Assert.Equal("http://fas:9527/api/ingest",
+            WebHelpers.ResolveWebhookUrl("http://fas:9527/api/ingest", 9527));
+    }
+
+    [Fact]
+    public void ResolveWebhookUrl_去除末尾斜杠()
+    {
+        Assert.Equal("http://fas:9527/api/ingest",
+            WebHelpers.ResolveWebhookUrl("http://fas:9527/api/ingest/", 9527));
+    }
+
+    [Fact]
+    public void ResolveWebhookUrl_未设置时回退本机IP()
+    {
+        var url = WebHelpers.ResolveWebhookUrl(null, 9527);
+        Assert.StartsWith("http://", url);
+        Assert.EndsWith(":9527/api/ingest", url);
+    }
+
+    [Fact]
+    public void ResolveWebhookUrl_空白字符串时回退本机IP()
+    {
+        var url = WebHelpers.ResolveWebhookUrl("   ", 9527);
+        Assert.StartsWith("http://", url);
+        Assert.EndsWith(":9527/api/ingest", url);
+    }
 }

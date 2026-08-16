@@ -1,0 +1,18 @@
+services:
+  fas:
+    image: ghcr.io/bg5esn/fmo-audit-service:latest
+    container_name: fmo-audit
+    restart: unless-stopped
+
+    environment:
+      EMQX_MONITOR_PORT: "9527"
+      EMQX_MONITOR_DB: /data/fmo-audit-service.db
+
+    ports:
+      - "9527:9527"
+
+    volumes:
+      - fas-data:/data
+
+volumes:
+  fas-data:

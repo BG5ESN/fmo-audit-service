@@ -20,7 +20,7 @@ FMO 4.0 把认证（技术：证书链可验证）与责任（治理：行为归
 - **健康监控**：服务器资源（CPU/内存/磁盘/网络）+ EMQX 节点状态（连接数/消息速率/告警）
 - **OTA 升级**：页面一键检查更新并自动替换重启
 
-技术特性：单文件自包含二进制（内置 .NET 运行时 + SQLite），零依赖；主题统计 10 秒 / 呼号统计 1 分钟精度，保留 30 天自动清理；支持 EMQX 5.1+，不支持 6.x 商业版本
+技术特性：单文件自包含二进制（内置 .NET 运行时 + SQLite），零依赖；主题统计 10 秒 / 呼号统计 1 分钟精度，保留 30 天自动清理；支持 EMQX 5.1+，不支持 6.x 商业版本；也提供 Docker 镜像（`linux/amd64` / `linux/arm64`），Docker Compose 一键部署，数据持久化，非 root 容器运行，镜像式更新
 
 ## 快速开始
 
@@ -42,6 +42,39 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 
 安装到 `%LOCALAPPDATA%\FMOAuditService\`；或解压 zip 双击 `fmo-audit-service.exe` 直接运行。访问 `http://<服务器IP>:9527`。
 
+### Docker Compose
+
+> FAS 也可作为 **fmo-server-suite**（SAS + EMQX + FAS 的 Docker Compose 一体化部署方案）的一部分运行，该方案会自动配置 EMQX 连接、API Key / Secret、connector / rule。本节描述的是独立部署方式。
+
+镜像面向已有的独立 EMQX 服务，不会随 Compose 启动 EMQX；`fas-data` 卷持久化 SQLite 数据库、FAS 配置、管理员账户、审计记录、黑名单和 EMQX 凭据。开箱即用，无需预先传参：
+
+```bash
+docker compose up -d
+```
+
+访问 `http://<服务器IP>:9527`，与非 Docker 部署一致：设置管理员账号（首次强制）→ 配置页填入 EMQX 地址 + API Key / Secret → 按需启用主题统计与身份控制。
+
+如需命令行配置（等价于 `--configure`），带上环境变量执行：
+
+```bash
+docker exec -e EMQX_URL=<地址> -e EMQX_API_KEY=<key> -e EMQX_API_SECRET=<secret> \
+  fmo-audit dotnet fmo-audit-service.dll --configure
+docker compose restart fas
+```
+
+反代场景需要设置 `EMQX_MONITOR_TRUST_PROXY=1`（仅用于可信反向代理），可在 `docker-compose.yml` 的 `environment` 中添加。
+
+卷 `fas-data` 不要删除，除非要完全重置 FAS；删除后管理员账号、EMQX 配置、审计与黑名单数据都会丢失。
+
+更新镜像（Docker 部署禁止应用自身替换二进制，页面/CLI 的 OTA 更新在容器内会提示改用此方式）：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+两个命令完成镜像拉取与容器重建；单实例部署重建期间会有短暂连接中断，非零中断更新。
+
 ### 首次配置
 
 1. 访问 `http://<服务器IP>:9527`，设置管理员账号（首次强制）
@@ -62,6 +95,17 @@ fmo-audit-service --configure
 
 自动完成：验证连接 → 保存配置 → 设置主题统计 bridge（分步日志输出，失败退出码 1）。
 ⚠️ Linux systemd 部署必须带 `EMQX_MONITOR_DB=/opt/fmo-fas/fmo-audit-service.db`（服务 unit 的 db 路径），否则配置写进默认数据目录、服务读不到。
+
+webhook 地址默认自动探测本机出口 IP，Docker/容器场景该 IP 不稳定，应显式指定 `EMQX_MONITOR_WEBHOOK_URL`，例如：
+
+```bash
+EMQX_URL=http://emqx:18083 \
+EMQX_API_KEY=<key> \
+EMQX_API_SECRET=<secret> \
+EMQX_MONITOR_DB=/data/fmo-audit-service.db \
+EMQX_MONITOR_WEBHOOK_URL=http://fas:9527/api/ingest \
+fmo-audit-service --configure
+```
 
 ## 反查伪造数据包
 
@@ -87,6 +131,7 @@ fmo-audit-service --configure
 | `EMQX_URL` | - | 命令行配置（--configure）用：EMQX 地址 |
 | `EMQX_API_KEY` | - | 命令行配置（--configure）用：API 密钥 Key |
 | `EMQX_API_SECRET` | - | 命令行配置（--configure）用：API 密钥 Secret |
+| `EMQX_MONITOR_WEBHOOK_URL` | - | 命令行配置（--configure）用：主题统计 bridge 的 webhook 地址，显式指定时直接使用；不设置时保持原行为（自动探测本机出口 IP 拼 `http://<IP>:<PORT>/api/ingest`）。Docker Compose 等容器动态 IP 场景应显式设置，例如 `http://fas:9527/api/ingest` |
 
 ## 数据与备份
 
