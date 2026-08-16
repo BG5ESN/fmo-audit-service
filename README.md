@@ -44,6 +44,8 @@ irm https://bg5esn.com/share/fmo/fas-installer/install.ps1 -OutFile "$env:TEMP\f
 
 ### Docker Compose
 
+> FAS 也可作为 **fmo-server-suite**（SAS + EMQX + FAS 的 Docker Compose 一体化部署方案）的一部分运行，该方案会自动配置 EMQX 连接、API Key / Secret、connector / rule。本节描述的是独立部署方式。
+
 镜像面向已有的独立 EMQX 服务，不会随 Compose 启动 EMQX；`fas-data` 卷持久化 SQLite 数据库、FAS 配置、管理员账户、审计记录、黑名单和 EMQX 凭据。开箱即用，无需预先传参：
 
 ```bash
