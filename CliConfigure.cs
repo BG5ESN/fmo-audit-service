@@ -9,8 +9,9 @@ public static class CliConfigure
 {
     public static async Task<(string? Error, string? Message)> RunAsync()
     {
-        // 配置一律走环境变量：EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET（+ 可选 EMQX_MONITOR_DB），
+        // 配置一律走环境变量：EMQX_URL / EMQX_API_KEY / EMQX_API_SECRET（+ 可选 FAS_HOST / EMQX_MONITOR_DB），
         // 不带命令行参数 —— Secret 走命令行会进 shell history，环境变量方式强制安全路径
+        var fasHost = Environment.GetEnvironmentVariable("FAS_HOST");
         var emqx = Environment.GetEnvironmentVariable("EMQX_URL");
         var key = Environment.GetEnvironmentVariable("EMQX_API_KEY");
         var secret = Environment.GetEnvironmentVariable("EMQX_API_SECRET");
@@ -56,7 +57,7 @@ public static class CliConfigure
                           "不一致时服务读不到本配置，需带 EMQX_MONITOR_DB=<服务同路径> 重跑");
 
         // 3) 自动设置主题统计 bridge（主题默认 FMO/RAW，webhook 自动取本机 IP）
-        var webhook = $"http://{WebHelpers.GetLanIp()}:{port}/api/ingest";
+        var webhook = $"http://{(string.IsNullOrEmpty(fasHost) ? WebHelpers.GetLanIp() : fasHost)}:{port}/api/ingest";
         var token = settings.IngestToken;
         const string topic = "FMO/RAW";
         Console.WriteLine($"[3/3] 设置主题统计 bridge: webhook={webhook} topic={topic}");
